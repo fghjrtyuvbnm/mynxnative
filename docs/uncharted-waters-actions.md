@@ -7,8 +7,8 @@ No paid larger runner is requested.
 
 ## Inputs and output
 
-- Release attachment: AES-256-GCM encrypted XCI, never the original game.
-- Actions variable `GAME_XCI_ASSET_ID`: numeric ID of that attachment.
+- Release attachments (16 MiB parts): AES-256-GCM encrypted XCI, never the original game.
+- Actions variable `GAME_XCI_ASSET_IDS`: JSON array of ordered encrypted attachment IDs.
 - Actions secret `BUILD_CIPHER_KEY`: 32-byte AES key encoded as hex.
 - Actions secret `PROD_KEYS`: the user's own Switch keys as text.
 - Artifact: `UnchartedWatersIV-encrypted-ipa`, retained for one day.
@@ -45,3 +45,8 @@ Local checks cover empty, short and multi-block encryption round trips,
 tampering rejection, preserving an existing output after authentication
 failure, and workflow/embedded Python syntax. A completed cloud run is needed
 to establish whether this title can be packaged.
+
+The reference FFR build uses split release assets and a pinned upstream source.
+This build follows that transfer pattern, while using AES-GCM and public standard
+runners. Its newer upstream revision requires Xcode 27.2, so it keeps xcode-27
+instead of copying the older FFR macos-26 toolchain blindly.
