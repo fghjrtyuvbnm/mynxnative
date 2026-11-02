@@ -1,0 +1,160 @@
+name: Build Uncharted Waters IV IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uncharted-waters-ipa
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    # Use free standard runners in a public repository; encrypt game inputs and outputs.
+    if: github.event.repository.private == false
+    runs-on: xcode-27
+    timeout-minutes: 180
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      GAME_DIR: ${{ runner.temp }}/uncharted-waters
+      KEYS_PATH: ${{ runner.temp }}/nxnative-keys/prod.keys
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: seedds/nxnative
+          ref: cde88f62068e3d879b083b1a86a7fd78610c7b7b
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: build-config
+          persist-credentials: false
+      - name: Check build configuration
+        env:
+          GAME_XCI_ASSET_ID: ${{ vars.GAME_XCI_ASSET_ID }}
+          PROD_KEYS: ${{ secrets.PROD_KEYS }}
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          test -n "$GAME_XCI_ASSET_ID" || { echo 'Missing GAME_XCI_ASSET_ID variable'; exit 1; }
+          test -n "$PROD_KEYS" || { echo 'Missing PROD_KEYS secret'; exit 1; }
+          test -n "$BUILD_CIPHER_KEY" || { echo 'Missing BUILD_CIPHER_KEY secret'; exit 1; }
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          df -h "$RUNNER_TEMP"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - name: Install build tools
+        run: |
+          brew install xcodegen zstd glslang
+          brew install --cask dotnet-sdk
+          python -m pip install lz4 'capstone>=5,<6' fonttools nsz zbic requests cryptography
+          xcodebuild -downloadComponent MetalToolchain
+          python dm/gfx/tools/own_compilers.py --check-metal
+      - name: Download and verify the supplied XCI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GAME_XCI_ASSET_ID: ${{ vars.GAME_XCI_ASSET_ID }}
+          PROD_KEYS: ${{ secrets.PROD_KEYS }}
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import requests
+          from urllib.parse import urlsplit
+
+          folder = Path(os.environ['GAME_DIR'])
+          folder.mkdir(parents=True, exist_ok=True)
+          key = Path(os.environ['KEYS_PATH'])
+          key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+          key.touch(mode=0o600)
+          key.write_text(os.environ['PROD_KEYS'], encoding='utf-8')
+          asset = os.environ['GAME_XCI_ASSET_ID']
+          if not asset.isdecimal():
+              raise SystemExit('Invalid release asset ID')
+          url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/assets/{asset}"
+          try:
+              headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                         'Accept': 'application/octet-stream'}
+              # requests removes Authorization when GitHub redirects to asset storage.
+              with requests.get(url, headers=headers, stream=True, timeout=120) as source:
+                  source.raise_for_status()
+                  if urlsplit(source.url).scheme != 'https':
+                      raise ValueError('Insecure redirect')
+                  with (folder / 'UnchartedWatersIV.xci.enc').open('wb') as target:
+                      for chunk in source.iter_content(8 * 1024 * 1024):
+                          target.write(chunk)
+          except Exception:
+              raise SystemExit('Private release asset download failed') from None
+          import sys
+          sys.path.insert(0, 'build-config/scripts')
+          from ipa_crypto import transform
+          transform(folder / 'UnchartedWatersIV.xci.enc', folder / 'UnchartedWatersIV.xci',
+                    bytes.fromhex(os.environ['BUILD_CIPHER_KEY']), decrypt=True)
+          (folder / 'UnchartedWatersIV.xci.enc').unlink()
+          digest = hashlib.sha256()
+          with (folder / 'UnchartedWatersIV.xci').open('rb') as verified:
+              while chunk := verified.read(8 * 1024 * 1024):
+                  digest.update(chunk)
+          expected = '0c8f01e3969357c0968bc8443166f1d33b1cdfffca46455d304f0d0f3325542b'
+          if digest.hexdigest() != expected:
+              raise SystemExit('XCI SHA256 does not match the local source file')
+          print('XCI SHA256 verified')
+          PY
+      - name: Build unsigned IPA
+        # Hosted virtual Macs cannot perform the provisional profile GPU/heap probe.
+        # The resulting guessed profile requires validation on a physical device.
+        run: |
+          python scripts/build_ipa_from_nsp.py "$GAME_DIR" \
+            --keys "$KEYS_PATH" --title-id 0100F0E0136BE000 \
+            --platform ios --romfs bundle --gpu none --no-heap-check \
+            --progress lines --out "$RUNNER_TEMP/UnchartedWatersIV.ipa"
+      - name: Validate IPA container
+        run: |
+          python - <<'PY'
+          import os
+          import plistlib
+          from pathlib import Path
+          import zipfile
+
+          ipa = Path(os.environ['RUNNER_TEMP']) / 'UnchartedWatersIV.ipa'
+          with zipfile.ZipFile(ipa) as archive:
+              bad = archive.testzip()
+              if bad:
+                  raise SystemExit('IPA ZIP integrity check failed')
+              infos = [n for n in archive.namelist()
+                       if n.startswith('Payload/') and n.count('/') == 2
+                       and n.endswith('.app/Info.plist')]
+              if len(infos) != 1:
+                  raise SystemExit('Expected exactly one Payload app')
+              info = plistlib.loads(archive.read(infos[0]))
+              executable = infos[0].rsplit('/', 1)[0] + '/' + info['CFBundleExecutable']
+              if archive.getinfo(executable).file_size == 0:
+                  raise SystemExit('Missing app executable')
+          print('IPA container verified; device gameplay remains untested')
+          PY
+      - name: Encrypt finished IPA
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/UnchartedWatersIV.ipa" "$RUNNER_TEMP/UnchartedWatersIV.ipa.enc"
+          rm -- "$RUNNER_TEMP/UnchartedWatersIV.ipa"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: UnchartedWatersIV-encrypted-ipa
+          path: ${{ runner.temp }}/UnchartedWatersIV.ipa.enc
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Remove temporary game inputs and keys
+        if: always()
+        run: |
+          rm -rf -- "$GAME_DIR" "${KEYS_PATH%/*}"
