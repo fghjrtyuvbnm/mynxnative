@@ -1,0 +1,33 @@
+name: Free hosted IPA toolchain preflight
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    if: github.event.repository.private == false
+    runs-on: xcode-27
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - name: Check Apple Silicon and selected Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          df -h "$RUNNER_TEMP"
+      - name: Compile a synthetic iOS Metal shader without GPU access
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! xcrun -sdk iphoneos metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          printf '#include <metal_stdlib>\nusing namespace metal;\nkernel void sample(device uint *p [[buffer(0)]]) {p[0]=1;}\n' > "$RUNNER_TEMP/sample.metal"
+          xcrun -sdk iphoneos metal -c "$RUNNER_TEMP/sample.metal" -o "$RUNNER_TEMP/sample.air"
+          xcrun -sdk iphoneos metallib "$RUNNER_TEMP/sample.air" -o "$RUNNER_TEMP/sample.metallib"
+          test -s "$RUNNER_TEMP/sample.metallib"
