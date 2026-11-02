@@ -56,10 +56,14 @@ def main():
     os.environ.update(env)
     sys.path[:0] = [str(repo / 'dm/games'), str(repo / 'dm/tools')]
     import game
+    import profile_guess
     spec = importlib.util.spec_from_file_location('nsp_build', repo / 'scripts/build_ipa_from_nsp.py')
     build = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(build)
+    build.pg = profile_guess
     profile = game.load(TITLE)
+    if int(profile.get('sys_resource', '0'), 0) == 0:
+        profile = build.refine_after_rewrite(profile, work / 'extract/v262144', work / 'patched_v262144')
     logs = work / 'logs'
     logs.mkdir(exist_ok=True)
     build.PROG.mode = 'lines'
