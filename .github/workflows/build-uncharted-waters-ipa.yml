@@ -22,8 +22,6 @@ jobs:
     timeout-minutes: 180
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
-      GAME_DIR: ${{ runner.temp }}/uncharted-waters
-      KEYS_PATH: ${{ runner.temp }}/nxnative-keys/prod.keys
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,17 +34,19 @@ jobs:
           persist-credentials: false
       - name: Check build configuration
         env:
-          GAME_XCI_ASSET_ID: ${{ vars.GAME_XCI_ASSET_ID }}
+          GAME_XCI_ASSET_IDS: ${{ vars.GAME_XCI_ASSET_IDS }}
           PROD_KEYS: ${{ secrets.PROD_KEYS }}
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
         run: |
-          test -n "$GAME_XCI_ASSET_ID" || { echo 'Missing GAME_XCI_ASSET_ID variable'; exit 1; }
+          test -n "$GAME_XCI_ASSET_IDS" || { echo 'Missing GAME_XCI_ASSET_IDS variable'; exit 1; }
           test -n "$PROD_KEYS" || { echo 'Missing PROD_KEYS secret'; exit 1; }
           test -n "$BUILD_CIPHER_KEY" || { echo 'Missing BUILD_CIPHER_KEY secret'; exit 1; }
           test "$(uname -m)" = arm64
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           df -h "$RUNNER_TEMP"
+          echo "GAME_DIR=$RUNNER_TEMP/uncharted-waters" >> "$GITHUB_ENV"
+          echo "KEYS_PATH=$RUNNER_TEMP/nxnative-keys/prod.keys" >> "$GITHUB_ENV"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.14'
@@ -60,12 +60,13 @@ jobs:
       - name: Download and verify the supplied XCI
         env:
           GH_TOKEN: ${{ github.token }}
-          GAME_XCI_ASSET_ID: ${{ vars.GAME_XCI_ASSET_ID }}
+          GAME_XCI_ASSET_IDS: ${{ vars.GAME_XCI_ASSET_IDS }}
           PROD_KEYS: ${{ secrets.PROD_KEYS }}
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
         run: |
           python - <<'PY'
           import hashlib
+          import json
           import os
           from pathlib import Path
           import requests
@@ -77,23 +78,25 @@ jobs:
           key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
           key.touch(mode=0o600)
           key.write_text(os.environ['PROD_KEYS'], encoding='utf-8')
-          asset = os.environ['GAME_XCI_ASSET_ID']
-          if not asset.isdecimal():
-              raise SystemExit('Invalid release asset ID')
-          url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/assets/{asset}"
+          assets = json.loads(os.environ['GAME_XCI_ASSET_IDS'])
+          if not assets or not all(isinstance(asset, int) and asset > 0 for asset in assets):
+              raise SystemExit('Invalid release asset IDs')
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                     'Accept': 'application/octet-stream'}
           try:
-              headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
-                         'Accept': 'application/octet-stream'}
-              # requests removes Authorization when GitHub redirects to asset storage.
-              with requests.get(url, headers=headers, stream=True, timeout=120) as source:
-                  source.raise_for_status()
-                  if urlsplit(source.url).scheme != 'https':
-                      raise ValueError('Insecure redirect')
-                  with (folder / 'UnchartedWatersIV.xci.enc').open('wb') as target:
-                      for chunk in source.iter_content(8 * 1024 * 1024):
-                          target.write(chunk)
+              with (folder / 'UnchartedWatersIV.xci.enc').open('wb') as target:
+                  for index, asset in enumerate(assets):
+                      url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/assets/{asset}"
+                      # requests strips Authorization on cross-host redirects.
+                      with requests.get(url, headers=headers, stream=True, timeout=120) as source:
+                          source.raise_for_status()
+                          if urlsplit(source.url).scheme != 'https':
+                              raise ValueError('Insecure redirect')
+                          for chunk in source.iter_content(8 * 1024 * 1024):
+                              target.write(chunk)
+                      print(f'Downloaded encrypted part {index + 1}/{len(assets)}')
           except Exception:
-              raise SystemExit('Private release asset download failed') from None
+              raise SystemExit('Encrypted release part download failed') from None
           import sys
           sys.path.insert(0, 'build-config/scripts')
           from ipa_crypto import transform
