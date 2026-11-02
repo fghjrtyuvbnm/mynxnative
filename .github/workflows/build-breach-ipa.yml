@@ -1,0 +1,90 @@
+name: Build Into the Breach IPA
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: breach-ipa
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    if: github.event.repository.private == false
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: seedds/nxnative
+          ref: cde88f62068e3d879b083b1a86a7fd78610c7b7b
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: build-config
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.14'
+      - name: Install Apple build tools
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          brew install xcodegen zstd glslang
+          if ! dotnet --list-sdks | grep -q '^10\.'; then brew install dotnet@10; echo "$(brew --prefix dotnet@10)/bin" >> "$GITHUB_PATH"; fi
+          python -m pip install lz4 'capstone>=5,<6' fonttools requests cryptography
+          if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
+          python dm/gfx/tools/own_compilers.py --check-metal
+      - name: Restore encrypted Windows-prepared input
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          import requests
+          sys.path.insert(0, 'build-config/scripts')
+          from ipa_crypto import transform
+          dest = Path(os.environ['RUNNER_TEMP'])
+          encrypted = dest / 'prepared.tar.xz.enc'
+          parts = sorted(Path('build-config/build-input-breach').glob('prepared.enc.part*'))
+          assert parts, 'Missing encrypted prepared inputs'
+          with encrypted.open('wb') as output:
+              for part in parts:
+                  output.write(part.read_bytes())
+          transform(encrypted, dest / 'prepared.tar.xz', bytes.fromhex(os.environ['BUILD_CIPHER_KEY']), True)
+          encrypted.unlink()
+          PY
+      - name: Compile Metal libraries and unsigned iOS template
+        run: python -u build-config/scripts/cloud_compile_breach.py "$RUNNER_TEMP/prepared.tar.xz" "$RUNNER_TEMP/game" "$GITHUB_WORKSPACE"
+      - name: Verify and encrypt compiled template
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          python - <<'PY'
+          import os, sys, zipfile, plistlib
+          from pathlib import Path
+          sys.path.insert(0, 'build-config/scripts')
+          from ipa_crypto import transform
+          root = Path(os.environ['RUNNER_TEMP'])
+          template = root / 'game/output/IntoTheBreach-template.ipa'
+          with zipfile.ZipFile(template) as archive:
+              assert archive.testzip() is None
+              info = plistlib.loads(archive.read('Payload/DmIOS.app/Info.plist'))
+              assert archive.getinfo('Payload/DmIOS.app/' + info['CFBundleExecutable']).file_size > 0
+              assert not any(n.startswith('Payload/DmIOS.app/romfs/') for n in archive.namelist())
+          transform(template, root / 'IntoTheBreach-template.ipa.enc', bytes.fromhex(os.environ['BUILD_CIPHER_KEY']))
+          template.unlink()
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: IntoTheBreach-encrypted-template
+          path: ${{ runner.temp }}/IntoTheBreach-template.ipa.enc
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
