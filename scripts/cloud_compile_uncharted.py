@@ -4,7 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
 import tarfile
 
@@ -21,7 +21,7 @@ def restore(archive, work):
     work.mkdir(parents=True, exist_ok=False)
     with tarfile.open(archive, 'r:gz') as package:
         for member in package.getmembers():
-            path = Path(member.name)
+            path = PurePosixPath(member.name)
             if path.is_absolute() or '..' in path.parts or '\\' in member.name or ':' in member.name:
                 raise ValueError('Unsafe archive path')
             if not (member.isfile() or member.isdir()):

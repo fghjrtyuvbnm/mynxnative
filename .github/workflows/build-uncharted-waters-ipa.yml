@@ -42,8 +42,6 @@ jobs:
           python dm/gfx/tools/own_compilers.py --check-metal
       - name: Restore encrypted Windows-prepared input
         env:
-          ASSET_IDS: ${{ vars.PREPARED_ASSET_IDS }}
-          GH_TOKEN: ${{ github.token }}
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
         run: |
           python - <<'PY'
@@ -52,16 +50,13 @@ jobs:
           import requests
           sys.path.insert(0, 'build-config/scripts')
           from ipa_crypto import transform
-          ids = json.loads(os.environ['ASSET_IDS'])
-          assert ids and all(isinstance(x, int) and x > 0 for x in ids)
           dest = Path(os.environ['RUNNER_TEMP'])
           encrypted = dest / 'prepared.tar.gz.enc'
+          parts = sorted(Path('build-config/build-input').glob('prepared.enc.part*'))
+          assert parts, 'Missing encrypted prepared inputs'
           with encrypted.open('wb') as output:
-              for asset in ids:
-                  url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/assets/{asset}"
-                  with requests.get(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/octet-stream'}, stream=True, timeout=120) as response:
-                      response.raise_for_status()
-                      for block in response.iter_content(8 * 1024 * 1024): output.write(block)
+              for part in parts:
+                  output.write(part.read_bytes())
           transform(encrypted, dest / 'prepared.tar.gz', bytes.fromhex(os.environ['BUILD_CIPHER_KEY']), True)
           encrypted.unlink()
           PY

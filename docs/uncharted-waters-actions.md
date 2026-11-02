@@ -1,52 +1,87 @@
-# Uncharted Waters IV: free public Actions build
+# Uncharted Waters IV: local preparation and free Apple compilation
 
-This repository holds build configuration only. The workflow checks out
-`seedds/nxnative` at `cde88f62068e3d879b083b1a86a7fd78610c7b7b`.
-It uses the standard `xcode-27` hosted runner in a public repository.
-No paid larger runner is requested.
+Target: `0100F0E0136BE000`, update v131072 / 1.0.2, main build
+`b0af08523e1f31067bb9e170532047ac`, SDK 10.4.1. Upstream source:
+`cde88f62068e3d879b083b1a86a7fd78610c7b7b`.
 
-## Inputs and output
+## Division of work
 
-- Release attachments (16 MiB parts): AES-256-GCM encrypted XCI, never the original game.
-- Actions variable `GAME_XCI_ASSET_IDS`: JSON array of ordered encrypted attachment IDs.
-- Actions secret `BUILD_CIPHER_KEY`: 32-byte AES key encoded as hex.
-- Actions secret `PROD_KEYS`: the user's own Switch keys as text.
-- Artifact: `UnchartedWatersIV-encrypted-ipa`, retained for one day.
+- Windows: XCI integrity check; base/update merging; architecture and import survey;
+  provisional profile; rewriting main, sdk and eight registered NROs; extraction
+  of all 17 shader programs; hashing, compression and authenticated encryption.
+- Public GitHub Actions: standard `xcode-27` Apple Silicon runner, Xcode 27.2;
+  pinned shader translator/Metal toolchain; unsigned iOS application compilation.
+- Windows: decrypt the compiled template, add all 221 complete RomFS files,
+  preserve Unix executable permissions, check all ZIP CRCs and produce SHA256.
 
-The encrypted input's original SHA256 must be
-`0c8f01e3969357c0968bc8443166f1d33b1cdfffca46455d304f0d0f3325542b`.
-The local source was 1,511,003,136 bytes. Keys and original game files must
-never be committed or uploaded as public attachments. Secrets must only be
-used by trusted workflow code. Only manual dispatch is configured.
+This follows the Windows/cloud split used by the user's FFR reference project.
+The newer source requires Xcode 27.2 rather than the FFR source's older toolchain.
+The free hosted preflight has passed architecture, SDK and synthetic iOS Metal
+compilation checks. It does not test the game's runtime.
 
-## Retrieve the IPA
+## Local work
 
-Download and extract the encrypted artifact, then decrypt locally:
+Game-derived files and portable .NET/Python tools stay in the game's work folder
+beside the original XCI. Never place keys or extracted game files in this repo.
+Run local preparation with Python UTF-8 mode:
 
-```powershell
-python scripts/ipa_crypto.py decrypt UnchartedWatersIV.ipa.enc UnchartedWatersIV.ipa --key-file local-private/build.key
+```text
+python -X utf8 scripts/prepare_uncharted_local.py <XCI> <game-work> --keys <prod.keys>
 ```
 
-Install Python `cryptography` if needed. Keep `local-private/build.key` backed
-up securely: losing it prevents decryption. This folder is gitignored in the
-local working copy. The cloud has the key only through Actions Secrets.
-AES-GCM uses a fresh random nonce per encryption and rejects tampering.
+On Windows the script uses the source-built nx_extract.exe and upstream's
+`DM_REWRITE_J=1` setting, which avoids fork while preserving rewrite behavior.
+The survey previously treated a directory named `.nro` as a module; the script
+now filters for files. This was reproduced on this image before the one-line
+repair, and the same survey passed afterward. This is real-image regression
+evidence; no synthetic import failure is counted as test-first evidence.
 
-## Verification limits
+## Reference game and profile
 
-The IPA is unsigned. Container verification does not establish game
-compatibility. This title has no upstream profile, so the build guesses one.
-`--no-heap-check` skips the physical Mac probe unavailable on the hosted VM;
-`--gpu none` omits optional offline pipeline archives. Startup, memory sizing
-and rendering require physical-device testing. The app writes diagnostics to
-`Documents/log.txt`. No signing or device installation is automated.
+Taiko Risshiden V DX (`0100346017304000`) is a useful input/memory reference.
+This binary also imports GetTouchScreenState, GetGestureStates and CPU overclock
+state, and its NPDM declares zero system resource. Its own heap analysis gives
+4 GB reservation, 256 MB alias and stack regions, and app pool 0xCD500000.
+The provisional profile starts in handheld touch mode. No foreign game's fixed
+instruction address, frame-rate cut, shader table or build ID is copied.
 
-Local checks cover empty, short and multi-block encryption round trips,
-tampering rejection, preserving an existing output after authentication
-failure, and workflow/embedded Python syntax. A completed cloud run is needed
-to establish whether this title can be packaged.
+Unlike that reference title, this title loads eight NRO modules at runtime.
+They are collected against the NRR registrations and rewritten locally.
+The cloud marker is the real 752-byte `res/GlobalConfig.ktsl2gcbin`, included in
+the complete local RomFS too; the 119 MB TownGrp resource need not be uploaded.
 
-The reference FFR build uses split release assets and a pinned upstream source.
-This build follows that transfer pattern, while using AES-GCM and public standard
-runners. Its newer upstream revision requires Xcode 27.2, so it keeps xcode-27
-instead of copying the older FFR macos-26 toolchain blindly.
+## Encrypted transfer
+
+The prepared archive is 6,189,914 bytes before the 36-byte AES-GCM envelope.
+It contains 88 hashed inputs, no original XCI, no Switch keys and no full RomFS.
+A local authenticated pack/restore round trip verifies every input SHA256.
+
+Because the Release upload endpoint times out on this connection, encrypted
+input blocks are stored under `build-input/` in the public configuration repo.
+The workflow restores their ordered ciphertext and authenticates it before
+extracting. `BUILD_CIPHER_KEY` is the only Actions Secret required. The local
+key is `local-private/build.key`, a gitignored file. Keep it backed up securely.
+No `prod.keys` is uploaded. The public repository exposes ciphertext and build
+configuration; never commit the local key or plaintext prepared archive.
+
+The compiled app template is AES-256-GCM encrypted before artifact upload.
+Artifact `UnchartedWatersIV-encrypted-template` expires after one day. Download
+and extract it locally, then finish:
+
+```text
+python -X utf8 scripts/finish_uncharted_local.py <template.ipa.enc> <game-work> <new-output.ipa> --key-file local-private/build.key
+```
+
+The finalizer refuses an existing output, checks the bundle and arm64 Mach-O,
+preserves template modes and shader files, adds complete local resources,
+checks all ZIP CRCs, and writes `<output>.verification.json` with SHA256.
+Its synthetic-template round trip has passed. Tests added after implementation
+are regression coverage, not a claimed RED/GREEN cycle.
+
+## Limits
+
+The output is unsigned. No signing or installation is automated. No physical
+Apple device or game runtime has been tested. Rendering, input, sound, saves,
+memory suitability and frame rate remain unverified. Use Documents/log.txt
+from the installed app to investigate runtime issues. The cloud build must
+compile all 17 discovered shaders; it does not silently accept missing ones.
