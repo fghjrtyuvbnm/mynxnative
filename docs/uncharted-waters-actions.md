@@ -112,3 +112,37 @@ existing Uncharted Waters IV IPA remains unchanged and without a frame-rate
 patch. This is a finding about the available verified patch, not proof that
 no custom patch could ever be developed. Runtime frame-time evidence is needed
 before changing an unrelated timing loop.
+
+## LiveContainer startup feedback and memory accounting fix
+
+The user reports Taiko works in LiveContainer, while this title exits after
+pressing Play in the launcher. Device log.txt / .ips has not been provided;
+the exact crash cause is not yet confirmed.
+
+A concrete packaging error was independently reproduced: the custom prepared
+input path skipped upstream refine_after_rewrite, leaving reported module
+memory at the 64 MiB default despite the current rewritten image needing
+74 MiB (0x4a00000). Taiko's modules fit the 64 MiB default. The upstream
+mechanism is documented in [Heap sized from the application pool less used
+memory](reference/memory.md#heap-sized-from-the-application-pool-less-used-memory).
+Under-reporting used memory makes a pool-minus-used heap request too large
+for the real image; this is not an increase of the application pool or a
+frame-rate change.
+
+Both the local preparation and cloud compilation paths now call the upstream
+post-rewrite calculation. The real-image memory contract failed before the
+fix and passes afterward. A synthetic old-input regression also fails against
+the old cloud script and passes against the fixed script before any Apple
+compilation. Together with profile-guess tests, 15 focused tests pass. The
+synthetic test is also configured in the cloud workflow. The later fixture
+coverage is regression coverage, not a claimed new test-first cycle.
+
+Corrected build succeeded:
+https://github.com/fghjrtyuvbnm/mynxnative/actions/runs/41377614923
+Its log confirms mem_used 0x4a00000 and 17 of 17 shaders compiled. Local output
+UnchartedWatersIV-1.0.2-memory-fix-unsigned.ipa is 1,522,409,064 bytes, includes
+221 complete RomFS files, passes ZIP CRC verification and remains unsigned
+without a frame-rate patch. SHA256:
+dba5c6d89b7bdff5b61387d11b558edd304f42b7391a1a16cd1784719749dc4b.
+The original IPA is preserved for comparison. Device startup still needs
+confirmation; request Documents/log.txt or a crash report if it continues.
