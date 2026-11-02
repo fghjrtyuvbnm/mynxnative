@@ -85,3 +85,18 @@ Apple device or game runtime has been tested. Rendering, input, sound, saves,
 memory suitability and frame rate remain unverified. Use Documents/log.txt
 from the installed app to investigate runtime issues. The cloud build must
 compile all 17 discovered shaders; it does not silently accept missing ones.
+
+## Completed build
+
+The free hosted build succeeded:
+https://github.com/fghjrtyuvbnm/mynxnative/actions/runs/41373666294
+
+Local assembly produced `UnchartedWatersIV-1.0.2-unsigned.ipa`:
+1,522,409,061 bytes, 221 complete RomFS files, all ZIP CRCs checked,
+arm64 executable mode 0755 preserved, minimum iOS/iPadOS 26.0. The launcher
+was checked for handheld mode and Simplified Chinese defaults. No frame-rate
+patch is applied. Main and all eight NRO cut tables contain no game-specific
+cuts; SDK cuts concern address-region memory layout.
+
+SHA256: `584e7aeca7c6132f2b46fc67c59a6790aaa0f4581d5d5352630e8cd7cce1115d`.
+Physical-device gameplay remains untested.
