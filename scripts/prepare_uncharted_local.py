@@ -76,6 +76,7 @@ def main():
     logs = work / 'logs'
     build.rewrite(Path(sys.executable), repo, extracted / 'ExeFS',
                   work / f'patched_{version}', env, logs, game_profile, provisional=True)
+    game_profile = build.refine_after_rewrite(game_profile, extracted, work / f'patched_{version}')
     build.split_shaders(Path(sys.executable), repo, [extracted / 'RomFS'],
                         [extracted / 'ExeFS/main'], work / 'shader/pkg',
                         env, logs, game_profile, provisional=True)
