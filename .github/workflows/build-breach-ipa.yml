@@ -40,6 +40,8 @@ jobs:
           python -m pip install lz4 'capstone>=5,<6' fonttools requests cryptography
           if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
           python dm/gfx/tools/own_compilers.py --check-metal
+      - name: Check touch-only layout policy
+        run: python -m unittest discover -s build-config/scripts/tests -p test_touch_layout.py -v
       - name: Restore encrypted Windows-prepared input
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}

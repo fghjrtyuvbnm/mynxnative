@@ -56,7 +56,9 @@ def main():
     build = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(build)
     build.pg = profile_guess
-    profile = game.load(TITLE)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import touch_build
+    profile = touch_build.configure_profile(build, game.load(TITLE))
     # The prepared profile may predate post-rewrite memory sizing. These inputs
     # explicitly declare no system resource, so refresh their static module cost.
     if int(profile.get('sys_resource', '0'), 0) == 0:
@@ -68,6 +70,7 @@ def main():
     build.configure_dotnet(env)
     translator = repo / 'dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate'
     build.check_prereqs(env, translator)
+    touch_build.patch_ios_source(repo)
     build.chain_header(Path(sys.executable), repo, env, logs)
     shader = work / 'shader'
     ios = build.build_shaders(Path(sys.executable), repo, shader, translator,
@@ -86,6 +89,7 @@ def main():
                        DM_BUNDLE_ID='org.nxnative.' + TITLE.lower())
     build.run(['bash', repo / 'dm/ios/tools/build_ipa.sh', template],
               logs / 'compile-template.log', env=compile_env)
+    touch_build.verify_template(template)
     print(f'Unsigned template compiled: {template}; full game resources must be added on Windows', flush=True)
 
 

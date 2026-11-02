@@ -45,6 +45,8 @@ jobs:
           NXNATIVE_REPO: ${{ github.workspace }}
           CLOUD_SCRIPT_PATH: ${{ github.workspace }}/build-config/scripts/cloud_compile_uncharted.py
         run: python -m unittest discover -s build-config/scripts/tests -p test_prepared_memory.py -v
+      - name: Check touch-only layout policy
+        run: python -m unittest discover -s build-config/scripts/tests -p test_touch_layout.py -v
       - name: Restore encrypted Windows-prepared input
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
