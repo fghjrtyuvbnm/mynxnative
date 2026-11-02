@@ -100,3 +100,15 @@ cuts; SDK cuts concern address-region memory layout.
 
 SHA256: `584e7aeca7c6132f2b46fc67c59a6790aaa0f4581d5d5352630e8cd7cce1115d`.
 Physical-device gameplay remains untested.
+
+## Later frame-rate patch review
+
+The user later asked to check whether a frame-rate patch could also be used here.
+The two reviewed Taiko frame-end function rules match no function in main build
+b0af08523e1f31067bb9e170532047ac. A direct-import/call survey finds different
+GetSystemTick/SleepThread timing code, but does not establish an equivalent
+safe frame-end cut. No verified dedicated patch was located. Therefore the
+existing Uncharted Waters IV IPA remains unchanged and without a frame-rate
+patch. This is a finding about the available verified patch, not proof that
+no custom patch could ever be developed. Runtime frame-time evidence is needed
+before changing an unrelated timing loop.
