@@ -44,3 +44,18 @@ A synthetic local template/base/DLC assembly test has passed.
 The result is unsigned. No physical-device gameplay, input, audio, saves,
 DLC behavior, frame rate or power consumption is verified by compilation.
 The default language is Simplified Chinese and input is handheld touch.
+
+## Completed build
+
+Free hosted build succeeded:
+https://github.com/fghjrtyuvbnm/mynxnative/actions/runs/41375749509
+
+Local output: TaikoRisshidenVDX-1.1.3-fps-patch-unsigned.ipa, 3,721,183,192 bytes.
+SHA256: b837b2545ca6f970610fd3a351de4aeafb40a90adea7f950f5bb40b47dfc555d.
+All 1324 RomFS files and the 196,634,958-byte DLC image are present. Every ZIP
+CRC and resource size passed. The arm64 executable retains Unix mode 0755;
+the validated 20-byte frame patch sequence occurs exactly once in the final
+packaged executable. Minimum iOS/iPadOS is 26.0, handheld and Simplified Chinese
+defaults confirmed from the packaged launcher settings. The matching tool's
+25 unit tests passed. Actual frame rate and physical-device gameplay remain
+untested. The original Uncharted Waters IV IPA retains its prior SHA256.
