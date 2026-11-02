@@ -51,10 +51,16 @@ def main():
     os.environ.update(env)
     sys.path[:0] = [str(repo / 'dm/games'), str(repo / 'dm/tools')]
     import game
+    import profile_guess
     spec = importlib.util.spec_from_file_location('nsp_build', repo / 'scripts/build_ipa_from_nsp.py')
     build = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(build)
+    build.pg = profile_guess
     profile = game.load(TITLE)
+    # The prepared profile may predate post-rewrite memory sizing. These inputs
+    # explicitly declare no system resource, so refresh their static module cost.
+    if int(profile.get('sys_resource', '0'), 0) == 0:
+        profile = build.refine_after_rewrite(profile, work / 'extract/v131072', work / 'patched_v131072')
     logs = work / 'logs'
     logs.mkdir(exist_ok=True)
     build.PROG.mode = 'lines'
