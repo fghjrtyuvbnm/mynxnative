@@ -69,7 +69,7 @@ def finish(encrypted, work, keyfile, output):
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     report = {'title_id': '0100F0E0136BE000', 'version': '1.0.2', 'romfs_files': len(files),
               'bytes': output.stat().st_size, 'sha256': digest, 'zip_crc_verified': True,
-              'signed': False, 'device_runtime_tested': False}
+              'signed': False, 'frame_rate_patch': False, 'device_runtime_tested': False}
     output.with_suffix('.verification.json').write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
 
