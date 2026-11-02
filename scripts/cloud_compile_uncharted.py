@@ -47,6 +47,7 @@ def main():
     manifest = restore(args.archive, work)
     env = dict(os.environ, DM_GAME=TITLE, GAME=TITLE, DM_GAMES_DIR=str(work / 'profile'),
                DM_ROOT=str(work), WORK=str(work / 'tmp'), J='3', PYTHONUTF8='1')
+    Path(env['WORK']).mkdir(parents=True, exist_ok=True)
     os.environ.update(env)
     sys.path[:0] = [str(repo / 'dm/games'), str(repo / 'dm/tools')]
     import game
