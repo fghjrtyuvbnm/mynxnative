@@ -69,6 +69,8 @@ def apply(repo, source=SOURCE):
     if settings.isEmpty && !ExternalGameDataStore.shared.enabled { return false }'''
         text=replace_once(text,old,new)
         text=replace_once(text,'    let model = LauncherModel(file.settings)','    let model = LauncherModel(settings)')
+        if 'LauncherModel(file.settings).applySaved()' in text:
+            text=replace_once(text,'LauncherModel(file.settings).applySaved()', 'LauncherModel(settings).applySaved()')
         text=replace_once(text,'''        host = nil
         model.apply()
         h.dismiss(animated: false) { done() }''',
