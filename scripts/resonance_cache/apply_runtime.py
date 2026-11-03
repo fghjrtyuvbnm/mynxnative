@@ -9,9 +9,9 @@ def replace_once(text,old,new):
     if text.count(old)!=1:raise ValueError('Pinned iOS launcher source changed; review the external-data patch')
     return text.replace(old,new,1)
 
-def apply(repo):
+def apply(repo, source=SOURCE):
     repo=pathlib.Path(repo).resolve()
-    if subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()!=SOURCE:raise ValueError('Unexpected runtime base source')
+    if subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()!=source:raise ValueError('Unexpected runtime base source')
     sources=repo/'dm/ios/Sources';runtime=pathlib.Path(__file__).resolve().parent
     for name in ('GameDataCore.swift','ExternalGameData.swift','ShaderCache.swift'):shutil.copyfile(runtime/name,sources/name)
     main=sources/'main.m';text=main.read_text(encoding='utf-8')
@@ -19,8 +19,7 @@ def apply(repo):
         text=replace_once(text,'#include <unistd.h>','#include <unistd.h>\n#include <stdbool.h>')
         text=replace_once(text,'static char *g_argv[4]; static int g_argc;',
             'static char *g_argv[4]; static int g_argc;\nextern bool dm_external_data_configured(void);\nstatic int uses_external_data(void) { return [[NSBundle.mainBundle objectForInfoDictionaryKey:@"DMExternalGameData"] boolValue]; }')
-        text=replace_once(text,'    if (!romfs) { fprintf(stderr, "boot: game files not found (<App>/romfs or Documents/romfs)\\n"); return 0; }',
-            '    if (!romfs && !uses_external_data()) { fprintf(stderr, "boot: game files not found (<App>/romfs or Documents/romfs)\\n"); return 0; }')
+        text=replace_once(text,'    if (!romfs) {', '    if (!romfs && !uses_external_data()) {')
         text=replace_once(text,'    fprintf(stderr, "boot: game files %s\\n", romfs.fileSystemRepresentation);',
             '    if (romfs && !uses_external_data()) fprintf(stderr, "boot: game files %s\\n", romfs.fileSystemRepresentation);')
         text=replace_once(text,'    setenv("DM_ROMFS", romfs.fileSystemRepresentation, 0);',
