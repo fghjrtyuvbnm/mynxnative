@@ -53,19 +53,42 @@ struct ShaderCache {
         var committed = false
         defer { if !committed { try? fm.removeItem(at: stage) } }
         let base = source.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        let packed = source.appendingPathComponent("shaders.pack").resolvingSymlinksInPath()
+        let archive: FileHandle?
+        if fm.fileExists(atPath: packed.path) {
+            guard packed.path.hasPrefix(base),
+                  let attrs = try? fm.attributesOfItem(atPath: packed.path),
+                  attrs[.type] as? FileAttributeType == .typeRegular,
+                  (attrs[.size] as? NSNumber)?.int64Value == total + 8 else {
+                throw GameDataError.invalidManifest
+            }
+            archive = try FileHandle(forReadingFrom: packed)
+        } else {
+            archive = nil
+        }
+        defer { try? archive?.close() }
+        if let archive, try archive.read(upToCount: 8) != Data("FFRSMSL1".utf8) {
+            throw GameDataError.invalidManifest
+        }
         var directories = Set<URL>()
         progress?(0, rows.count)
         for (index, row) in rows.enumerated() {
-            let incoming = source.appendingPathComponent(row.path).standardizedFileURL.resolvingSymlinksInPath()
-            guard incoming.path.hasPrefix(base) else { throw GameDataError.unsafePath }
-            guard let attrs = try? fm.attributesOfItem(atPath: incoming.path),
-                  attrs[.type] as? FileAttributeType == .typeRegular,
-                  (attrs[.size] as? NSNumber)?.int64Value == row.size else {
-                throw GameDataError.missingFile(incoming.lastPathComponent)
+            let name = URL(fileURLWithPath: row.path).lastPathComponent
+            let bytes: Data
+            if let archive {
+                bytes = row.size == 0 ? Data() : (try archive.read(upToCount: Int(row.size)) ?? Data())
+            } else {
+                let incoming = source.appendingPathComponent(row.path).standardizedFileURL.resolvingSymlinksInPath()
+                guard incoming.path.hasPrefix(base) else { throw GameDataError.unsafePath }
+                guard let attrs = try? fm.attributesOfItem(atPath: incoming.path),
+                      attrs[.type] as? FileAttributeType == .typeRegular,
+                      (attrs[.size] as? NSNumber)?.int64Value == row.size else {
+                    throw GameDataError.missingFile(incoming.lastPathComponent)
+                }
+                bytes = try Data(contentsOf: incoming)
             }
-            let bytes = try Data(contentsOf: incoming)
             guard bytes.count == row.size, Self.digest(bytes) == row.sha256 else {
-                throw GameDataError.cacheIntegrity(incoming.lastPathComponent)
+                throw GameDataError.cacheIntegrity(name)
             }
             let output = stage.appendingPathComponent(row.path)
             let dir = output.deletingLastPathComponent()

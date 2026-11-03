@@ -43,6 +43,19 @@ import Foundation
         assert(next.msl == first.msl)
         let cached = try Data(contentsOf: next.msl.appendingPathComponent("b-chain/example_b.metallib"))
         assert(cached == originals[shader])
+        try fm.removeItem(at: first.msl.deletingLastPathComponent())
+        var packed = Data("FFRSMSL1".utf8)
+        for row in rows where row.path.hasPrefix("msl/") { packed.append(originals[row.path]!) }
+        let archive = source.appendingPathComponent("shaders.pack")
+        var damaged = packed
+        damaged[damaged.count - 1] ^= 1
+        try damaged.write(to: archive)
+        do { _ = try inspect(); fatalError("Corrupt packed shader was accepted") }
+        catch GameDataError.cacheIntegrity(_) { }
+        try packed.write(to: archive)
+        let fromPack = try inspect()
+        let packedShader = try Data(contentsOf: fromPack.msl.appendingPathComponent("b-chain/example_b.metallib"))
+        assert(packedShader == originals[shader])
         print("PASS: failed copy, stale partial recovery, atomic commit and reuse with external ROMFS")
     }
 }
