@@ -1,0 +1,84 @@
+--- a/dm/host/hle_uemalloc.c
++++ b/dm/host/hle_uemalloc.c
+@@ -88,10 +88,22 @@
+ static void m_Nothing(void *self) { (void)self; }   // Trim (its bool argument is ignored), the thread-local cache setup and teardown, DumpAllocatorStats
+ static void *g_vt[NSLOT];
+ static const char *g_what;
++static const module_t *g_ue_module;
+ 
+ // Observation gate OBS_UE_MALLOC, on the cut constructor call: the object in the register the gate number's upper bits name (x0), before anything calls it
+ static void obj_made(uint64_t *regs, int param) {
+-    *(void **)(uintptr_t)regs[param] = g_vt;
++    void *object = (void *)(uintptr_t)regs[param];
++    *(void **)object = g_vt;
++    // Torneko's cut constructor also publishes this object and the address of
++    // its global (main+0xabacc..0xabae4). The allocation at main+0x149098
++    // dereferences that global even after the generic allocator fallback.
++    if (!strcmp(g_ue_module->build_id, "724c36a143f3f2257bf4f8bb37a0477c")) {
++        uint8_t *base = g_ue_module->base;
++        void **global = (void **)(base + 0x4e64670);
++        void ***alias = *(void ****)(base + 0x49ad2a0);
++        *global = object;
++        *alias = global;
++    }
+     static int once; if (!once++) LOG("%s: Unreal's allocator (FMallocBinned3 at %#llx) runs on a host malloc zone", g_what, (unsigned long long)regs[param]);
+ }
+ 
+@@ -133,6 +145,7 @@
+             if (!gate_obs_present(OBS_UE_MALLOC)) { LOG("[RED] main: the fixups name Unreal's FMallocBinned3 but main has no allocator gate: the allocator would have no vtable"); return; }
+             static char what[64]; snprintf(what, sizeof what, "main %.8s", m->build_id);
+             fill(b + m->ue_malloc_vt, L, what);
++            g_ue_module = m;
+             gate_obs_set(OBS_UE_MALLOC, obj_made);
+             return;
+         }
+--- a/dm/host/hle_fs.c
++++ b/dm/host/hle_fs.c
+@@ -557,6 +557,26 @@
+ // Cache storage (Tears of the Kingdom; its first list call opened fsp-srv and aborted in sm::Initialize): storage <index> is the host folder <temporary storage>_cache<index>,
+ // created when it is created or mounted. The list reports none (a fresh console), so the game creates its storage at every boot; creating an existing one succeeds
+ static const char *cache_dir(int index, char *b, size_t n) { char t[1024]; snprintf(b, n, "%s_cache%d", envdir("DM_TEMP", "run/platform/temp", t, sizeof t), index); return b; }
++// The SDK's query dereferences an am service that the host never creates.
++// Read the application's original control metadata, including a zero capacity.
++HLE_FORCE("_ZN2nn2fs18GetCacheStorageMaxEPiPl", "application cache capacity from control metadata", Result, h_fs_CacheMax, int *index, int64_t *size) {
++    const char *path = getenv("DM_CONTROL_NACP");
++    if (!index || !size || !path || !*path) return RES_FAIL;
++    FILE *file = fopen(path, "rb");
++    if (!file) return RES_FAIL;
++    uint8_t data[0x4000];
++    size_t got = fread(data, 1, sizeof data, file);
++    int extra = fgetc(file), failed = ferror(file);
++    fclose(file);
++    if (got != sizeof data || extra != EOF || failed) return RES_FAIL;
++    uint64_t maximum = 0;
++    for (int i = 7; i >= 0; i--) maximum = (maximum << 8) | data[0x3180 + i];
++    if (maximum > INT64_MAX) return RES_FAIL;
++    *index = data[0x3188] | (data[0x3189] << 8);
++    *size = (int64_t)maximum;
++    LOG("fs cache maximum: index %d, data and journal %lld bytes", *index, (long long)*size);
++    return RES_OK;
++}
+ HLE_FORCE("_ZN2nn2fs20OpenCacheStorageListEPNS0_22CacheStorageListHandleE", "fsp-srv; cache storage list: reports none", Result, h_fs_OpenCacheList, void *h) { (void)h; return RES_OK; }
+ HLE_FORCE("_ZN2nn2fs20ReadCacheStorageListEPiPNS0_16CacheStorageInfoENS0_22CacheStorageListHandleEi", "fsp-srv; cache storage list: reports none", Result, h_fs_ReadCacheList,
+           int *n, void *info, uint64_t h, int max) { (void)info; (void)h; (void)max; *n = 0; return RES_OK; }
+--- a/dm/ios/Sources/main.m
++++ b/dm/ios/Sources/main.m
+@@ -123,6 +123,8 @@
+     NSFileManager *fm = NSFileManager.defaultManager;
+     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+     NSString *res = NSBundle.mainBundle.resourcePath;
++    NSString *control = [res stringByAppendingPathComponent:@"dm/control.nacp"];
++    if ([fm fileExistsAtPath:control]) setenv("DM_CONTROL_NACP", control.fileSystemRepresentation, 1);
+     for (NSString *d in @[@"save", @"temp"]) [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
+     // Keep game files and scratch data out of device backups (Documents is backed up by default; a RomFS placed there is many GB). Saves, logs and the pipeline list stay in the backup
+     for (NSString *d in [@[@"romfs", @"aoc", @"temp"] arrayByAddingObjectsFromArray:[romfs_document_images(doc) valueForKey:@"lastPathComponent"]]) {
+--- a/dm/ios/tools/build_ipa.sh
++++ b/dm/ios/tools/build_ipa.sh
+@@ -102,6 +102,7 @@
+ else [ "$GFXAPI" != nvn ] || t "no pipeline archive ($([ -n "${DM_PSO_GPUS+set}" ] && echo "DM_PSO_GPUS=${GPUS:-empty}" || echo "the profile does not set pso_mtl4 on; DM_PSO_GPUS=g18p builds one")$([ -f "$GD/shader_pairs.tsv" ] || echo ', no shader_pairs.tsv'))"; fi
+ # The launcher's settings for this game (Launcher.swift): dm/games/settings.tsv filtered by the profile, main's rewriter table and the game's languages (dm/games/settings.py)
+ L=$(GFXAPI="$GFXAPI" python3 "$DM/games/settings.py" "$GAME" "$PATCHED" "$VNACP" Gen/dm/launcher.json) || die "launcher settings (dm/games/settings.py)"; t "launcher: $L"
++[ ! -f "$VNACP" ] || cp "$VNACP" Gen/dm/control.nacp || die "copy control metadata"
+ # The packed language (DMLanguage) is the Game language row's default, which settings.py makes the game's first language when it lacks DM_LANG: the screen and DM_LAUNCHER=0 then agree
+ LD=$(python3 -c 'import json, sys; print(next((s["default"] for s in json.load(open(sys.argv[1]))["settings"] if s["env"] == "DM_LANG"), ""))' Gen/dm/launcher.json) || die "launcher settings (Gen/dm/launcher.json)"
+ if [ -n "$LD" ] && [ "$LD" != "$DM_LANG" ]; then t "game language: the game has no $DM_LANG; packing $LD, its first"; export DM_LANG=$LD; fi
