@@ -1,8 +1,6 @@
-diff --git a/dm/host/hle_uemalloc.c b/dm/host/hle_uemalloc.c
-index e7c20b84..86dac48f 100644
 --- a/dm/host/hle_uemalloc.c
 +++ b/dm/host/hle_uemalloc.c
-@@ -88,10 +88,22 @@ static bool m_GetAllocationSize32(void *self, void *p, uint32_t *out) { (void)se
+@@ -88,10 +88,22 @@
  static void m_Nothing(void *self) { (void)self; }   // Trim (its bool argument is ignored), the thread-local cache setup and teardown, DumpAllocatorStats
  static void *g_vt[NSLOT];
  static const char *g_what;
@@ -26,7 +24,7 @@ index e7c20b84..86dac48f 100644
      static int once; if (!once++) LOG("%s: Unreal's allocator (FMallocBinned3 at %#llx) runs on a host malloc zone", g_what, (unsigned long long)regs[param]);
  }
  
-@@ -133,6 +145,7 @@ void dm_ue_malloc_install(void) {
+@@ -133,6 +145,7 @@
              if (!gate_obs_present(OBS_UE_MALLOC)) { LOG("[RED] main: the fixups name Unreal's FMallocBinned3 but main has no allocator gate: the allocator would have no vtable"); return; }
              static char what[64]; snprintf(what, sizeof what, "main %.8s", m->build_id);
              fill(b + m->ue_malloc_vt, L, what);
