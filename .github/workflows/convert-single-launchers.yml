@@ -1,0 +1,77 @@
+name: Convert existing single-file launchers
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  launcher:
+    if: github.event.repository.private == false
+    strategy:
+      fail-fast: false
+      matrix:
+        game: [taiko, refrain, sentinels]
+    runs-on: xcode-27
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: seedds/nxnative
+          ref: cde88f62068e3d879b083b1a86a7fd78610c7b7b
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: build-config
+          persist-credentials: false
+      - name: Test import, offline launch and clear
+        run: |
+          dir=build-config/scripts/resonance_cache
+          xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" "$dir/ShaderCacheTests.swift" -o "$RUNNER_TEMP/data-tests"
+          "$RUNNER_TEMP/data-tests"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.14'
+      - name: Install build tools
+        run: |
+          brew install xcodegen
+          python -m pip install lz4 fonttools cryptography
+      - name: Restore authenticated build inputs
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+          GAME_INPUT: ${{ matrix.game }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os, sys
+          sys.path.insert(0, 'build-config/scripts')
+          from ipa_crypto import transform
+          temp = Path(os.environ['RUNNER_TEMP'])
+          game = os.environ['GAME_INPUT']
+          key = bytes.fromhex(os.environ['BUILD_CIPHER_KEY'])
+          for index, directory in enumerate(('build-input-' + game, 'single-conversion/' + game)):
+              folder = Path('build-config') / directory
+              parts = sorted(folder.rglob('part-*')) or sorted(folder.glob('prepared.enc.part*'))
+              if not parts:
+                  raise ValueError('Missing ' + directory)
+              encrypted = temp / f'input{index}.enc'
+              with encrypted.open('wb') as stream:
+                  for part in parts:
+                      stream.write(part.read_bytes())
+              transform(encrypted, temp / f'input{index}.tar', key, True)
+          PY
+      - name: Compile launcher with existing shader identity
+        run: |
+          python -u build-config/scripts/resonance_cache/convert_single_launcher.py "${{ matrix.game }}" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/input0.tar" "$RUNNER_TEMP/input1.tar" "$RUNNER_TEMP/game" "$RUNNER_TEMP/launcher.ipa"
+      - name: Encrypt updated IPA
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/launcher.ipa" "$RUNNER_TEMP/launcher.enc"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: single-conversion-${{ matrix.game }}
+          path: ${{ runner.temp }}/launcher.enc
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2

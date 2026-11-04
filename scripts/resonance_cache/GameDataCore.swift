@@ -16,7 +16,10 @@ struct GameDataManifest: Codable {
 }
 struct GameDataLayout {
     let root: URL
-    var romfs: URL { root.appendingPathComponent("romfs", isDirectory: true) }
+    var romfs: URL {
+        let image = root.appendingPathComponent("romfs.img")
+        return FileManager.default.fileExists(atPath: image.path) ? image : root.appendingPathComponent("romfs", isDirectory: true)
+    }
     var cachedMSL: URL? = nil
     var msl: URL { cachedMSL ?? root.appendingPathComponent("msl", isDirectory: true) }
     var aoc: URL? {
@@ -46,6 +49,7 @@ enum GameDataError: Error, LocalizedError {
 
 enum GameDataValidator {
     static func safePath(_ path: String) -> Bool {
+        if path == "romfs.img" { return true }
         let parts = path.split(separator: "/", omittingEmptySubsequences: false)
         return !parts.isEmpty && ["romfs", "msl", "aoc"].contains(String(parts[0])) &&
             !path.contains("\\") && !path.contains(":") && !parts.contains("..") && !parts.contains(".") && !parts.contains("")
@@ -72,9 +76,13 @@ enum GameDataValidator {
         let romfsMarker = "romfs/" + marker
         let stamp = "msl/b-\(expected.shaderChain)/inputs.tsv"
         let names = Set(manifest.files.map(\.path))
-        guard names.count == manifest.files.count, names.contains(romfsMarker), names.contains(stamp) else { throw GameDataError.invalidManifest }
+        let image = names.contains("romfs.img")
+        guard names.count == manifest.files.count, names.contains(stamp),
+              image ? !names.contains(where: { $0.hasPrefix("romfs/") }) : names.contains(romfsMarker),
+              image || !FileManager.default.fileExists(atPath: root.appendingPathComponent("romfs.img").path)
+        else { throw GameDataError.invalidManifest }
         let check = manifest.files.filter {
-            shaderCache != nil ? !$0.path.hasPrefix("msl/") : (full || $0.path.hasPrefix("romfs/") || $0.path == stamp)
+            shaderCache != nil ? !$0.path.hasPrefix("msl/") : (full || $0.path == "romfs.img" || $0.path.hasPrefix("romfs/") || $0.path == stamp)
         }
         for (index, record) in check.enumerated() {
             guard safePath(record.path), record.size >= 0, record.sha256.count == 64 else { throw GameDataError.unsafePath }
