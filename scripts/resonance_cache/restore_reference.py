@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import shutil
 import tarfile
+import time
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
@@ -22,15 +24,22 @@ def restore(work):
         if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.githubusercontent.com'):
             raise ValueError('Unexpected private asset host')
         target = work/f'reference-input-{index}'
-        try:
-            with urlopen(url, timeout=90) as response, target.open('xb') as output:
-                shutil.copyfileobj(response, output, length=1024*1024)
-        except Exception:
-            raise RuntimeError(f'Private build input {index} is unavailable or its grant expired') from None
-        with target.open('rb') as stream:
-            if target.stat().st_size != row['bytes'] or hashlib.file_digest(stream,'sha256').hexdigest() != row['sha256']:
-                raise ValueError(f'Private build input {index} integrity mismatch')
-        return target
+        for attempt in range(5):
+            try:
+                with urlopen(url, timeout=90) as response, target.open('xb') as output:
+                    shutil.copyfileobj(response, output, length=1024*1024)
+                with target.open('rb') as stream:
+                    if target.stat().st_size == row['bytes'] and hashlib.file_digest(stream,'sha256').hexdigest() == row['sha256']:
+                        return target
+                reason = 'integrity mismatch'
+            except HTTPError as error:
+                reason = f'HTTP {error.code}'
+            except Exception as error:
+                reason = type(error).__name__
+            target.unlink(missing_ok=True)
+            print(f'Private build input {index}, attempt {attempt + 1}: {reason}', flush=True)
+            time.sleep(2 ** attempt)
+        raise RuntimeError(f'Private build input {index} unavailable: {reason}')
     with ThreadPoolExecutor(max_workers=4) as pool:
         files = list(pool.map(fetch, enumerate(meta['parts'])))
     archive = work/'reference-input.tar.gz'
