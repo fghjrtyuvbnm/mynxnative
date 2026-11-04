@@ -73,6 +73,7 @@ def main(repo, work, archive, output):
     plist = project/'Gen/Info.plist'
     info = plistlib.loads(plist.read_bytes())
     info.update(DMExternalGameData=True, DMExternalDataVersion=1,
+                DMLocalDataManagement=True,
                 DMExternalDataIdentity=dict(title_id=TITLE, main_build=BUILD, shader_chain=CHAIN, shader_inputs=INPUTS),
                 DMExternalRomFSMarker=marker, DMShaderCacheManifest=digest, LSSupportsOpeningDocumentsInPlace=True,
                 UIFileSharingEnabled=True)

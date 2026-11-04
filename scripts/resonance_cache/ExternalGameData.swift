@@ -117,7 +117,7 @@ final class ExternalGameDataStore: ObservableObject {
         }
     }
     private func showReady(_ layout: GameDataLayout) {
-        imported = layout.root.standardizedFileURL == local?.root.standardizedFileURL
+        imported = layout.root.resolvingSymlinksInPath().path == local?.root.resolvingSymlinksInPath().path
         folderName = imported ? "On this device" : layout.root.lastPathComponent
         message = imported ? "Game data ready for offline play" : "Game data ready"
         ready = true
@@ -131,7 +131,7 @@ final class ExternalGameDataStore: ObservableObject {
         queue.async {
             do {
                 guard let layout = session.current else { throw GameDataError.noSelection }
-                if layout.root.standardizedFileURL != local.root.standardizedFileURL {
+                if layout.root.resolvingSymlinksInPath().path != local.root.resolvingSymlinksInPath().path {
                     try access.coordinate(layout.root) { source in
                         let coordinated = GameDataLayout(root: source, cachedMSL: layout.cachedMSL)
                         try local.install(from: coordinated, progress: { count, total in
@@ -179,6 +179,9 @@ final class ExternalGameDataStore: ObservableObject {
         queue.async {
             do {
                 try session.start { layout in
+                    if let temp = getenv("DM_TEMP") {
+                        try FileManager.default.createDirectory(atPath: String(cString: temp), withIntermediateDirectories: true)
+                    }
                     let paths: [String: String?] = ["DM_ROMFS": layout.romfs.path, "DM_MSL_DIR": layout.msl.path, "DM_AOC_DIR": layout.aoc?.path]
                     var previous: [String: String] = [:]
                     for key in paths.keys { if let value = getenv(key) { previous[key] = String(cString: value) } }

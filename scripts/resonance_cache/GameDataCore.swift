@@ -211,7 +211,8 @@ struct LocalGameData {
         // A LiveContainer host may expose a parent Documents directory. Never
         // sweep unknown entries there, including other apps or containers.
         let generated: Set<String> = ["romfs", "romfs.img", "aoc", "msl", "temp",
-                                      "log.txt", "log.prev.txt", "gpu_captures", "pso"]
+                                      "log.txt", "log.prev.txt", "gpu_captures", "pso",
+                                      "pso_user.tsv", "pso_archive"]
         let legacy = try fm.contentsOfDirectory(at: documents, includingPropertiesForKeys: nil)
             .filter { generated.contains($0.lastPathComponent.lowercased()) }
         let save = extraSavePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
