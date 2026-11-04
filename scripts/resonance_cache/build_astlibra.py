@@ -1,4 +1,4 @@
-"""Compile the registered ASTLIBRA Revision shaders and an external-data IPA."""
+"""Capture ASTLIBRA startup shaders and build a provisional external-data IPA."""
 import hashlib
 import importlib.util
 import json
@@ -47,7 +47,21 @@ def main(repo, archive, work, output):
     if MAIN not in (patch/'main.fixups.tsv').read_text():
         raise ValueError('Unexpected rewritten ASTLIBRA Revision main')
     build.chain_header(Path(sys.executable), repo, env, logs)
-    build.capture_glslc(repo, {VERSION:extract}, VERSION, patch, work, env, logs, g)
+    # Capture-only workaround for the hosted Mac's paravirtual GPU: it lacks
+    # Metal 4, so regular NVN initialization aborts before DXLib invokes GLSLC.
+    # The existing classic device path supplies buffers while CPU GLSLC runs.
+    # Restore the host source before preparing the actual iOS application.
+    host_main = repo/'dm/host/main.c'
+    original_host_main = host_main.read_text()
+    needle = 'int main(int argc, char **argv) {'
+    if original_host_main.count(needle) != 1:
+        raise ValueError('Pinned Mac host entry changed')
+    host_main.write_text(original_host_main.replace(needle, needle +
+        '\n    if (getenv("DM_GLSLC_CAPTURE")) { void *mtl_device_classic(void); mtl_device_classic(); }',1))
+    try:
+        build.capture_glslc(repo, {VERSION:extract}, VERSION, patch, work, env, logs, g)
+    finally:
+        host_main.write_text(original_host_main)
     build.split_shaders(Path(sys.executable), repo, [extract/'RomFS'], [extract/'ExeFS/main'],
                         work/'shader/pkg', env, logs, g, provisional=True)
     if not map_rows(profile/'shader_map.tsv'):
