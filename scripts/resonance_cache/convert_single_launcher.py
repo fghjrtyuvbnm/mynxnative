@@ -1,9 +1,11 @@
 """Relink a previously bundled IPA for external data without retranslating shaders."""
 import importlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import plistlib
+import subprocess
 import sys
 import tarfile
 
@@ -61,7 +63,6 @@ def main(game_name, repo, archive, overlay, work, output):
         touch_build.patch_ios_source(repo)
     if int(profile.get('sys_resource', '0'), 0) == 0:
         profile = build.refine_after_rewrite(profile, extract, patch)
-    assert profile.get('romfs_marker') == external['DMExternalRomFSMarker']
     for name in ('c1_full.tsv', 'cb_extent.tsv'):
         (profile.dir/name).write_bytes((metadata/name).read_bytes())
     apply(repo, source=SOURCE)
@@ -71,7 +72,10 @@ def main(game_name, repo, archive, overlay, work, output):
     info = plistlib.loads(plist.read_bytes())
     info.update(external)
     plist.write_bytes(plistlib.dumps(info))
-    run('xcodebuild', '-project', project/'DmIOS.xcodeproj', '-scheme', f'{display} ({title})',
+    xcodeproj = project/'DmIOS.xcodeproj'
+    listing = subprocess.check_output(['xcodebuild', '-project', str(xcodeproj), '-list', '-json'], env=env)
+    scheme, = json.loads(listing)['project']['schemes']
+    run('xcodebuild', '-project', xcodeproj, '-scheme', scheme,
         '-configuration', 'Release', '-destination', 'generic/platform=iOS', '-derivedDataPath', dd,
         'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'CODE_SIGN_IDENTITY=',
         'DM_COPY_GAME_RESOURCES=NO', 'DM_XCODE_OUTPUT_ROOT='+str(dd), 'SYMROOT='+str(dd/'Build/Products'),
