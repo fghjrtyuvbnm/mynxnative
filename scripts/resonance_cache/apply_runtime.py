@@ -32,7 +32,7 @@ def apply(repo, source=SOURCE):
     launcher=sources/'Launcher.swift';text=launcher.read_text(encoding='utf-8')
     if '@ObservedObject private var data = ExternalGameDataStore.shared' not in text:
         text=replace_once(text,'    let play: () -> Void\n    @State private var memory',
-            '    let play: () -> Void\n    @ObservedObject private var data = ExternalGameDataStore.shared\n    @State private var dataPicker = false\n    @State private var memory')
+            '    let play: () -> Void\n    @ObservedObject private var data = ExternalGameDataStore.shared\n    @State private var dataPicker = false\n    @State private var confirmDataClear = false\n    @State private var memory')
         text=replace_once(text,'                List {\n                    ForEach(m.sections',
             '''                List {
                     if data.enabled {
@@ -42,10 +42,14 @@ def apply(repo, source=SOURCE):
                             if data.busy { ProgressView() }
                             Button("Choose data folder") { dataPicker = true }.disabled(data.busy || data.started)
                             Button("Check folder again") { data.recheck() }.disabled(data.busy || data.started)
+                            Button("Import all data") { data.importAll() }
+                                .disabled(!data.ready || data.imported || data.busy || data.started)
+                            Button("Clear game data", role: .destructive) { confirmDataClear = true }
+                                .disabled(data.busy || data.started)
                         } header: {
                             Text("Game data")
                         } footer: {
-                            Text("Select the exported folder in Files. Keep the drive connected while playing. Saves stay on this device.")
+                            Text("Play from the selected folder or import all data for offline play.")
                         }
                     }
                     ForEach(m.sections''')
@@ -53,6 +57,12 @@ def apply(repo, source=SOURCE):
             '''        .preferredColorScheme(.dark)
         .sheet(isPresented: $dataPicker) {
             GameDataFolderPicker(picked: { url in dataPicker = false; data.choose(url) }, cancelled: { dataPicker = false })
+        }
+        .alert("Clear game data?", isPresented: $confirmDataClear) {
+            Button("Clear game data", role: .destructive) { data.clearData() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes local game data, caches and logs. Your saves and launcher settings are kept. The external folder is untouched.")
         }
         .onAppear { data.restoreIfNeeded() }
         .task {''')

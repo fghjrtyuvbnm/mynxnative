@@ -104,6 +104,7 @@ protocol GameDataAccess {
 protocol GameDataBookmarks {
     func read() -> Data?
     func write(_ data: Data) throws
+    func clear()
 }
 
 // All methods run on one serial queue. A successful scope is retained until replacement or process teardown.
@@ -118,6 +119,23 @@ final class GameDataSession {
     func restore(progress: ((Int, Int) -> Void)? = nil) throws -> GameDataLayout {
         guard let bookmark = bookmarks.read() else { throw GameDataError.noSelection }
         return try select(access.resolve(bookmark), progress: progress)
+    }
+    func useLocal(_ url: URL) throws -> GameDataLayout {
+        guard !started else { throw GameDataError.alreadyStarted }
+        guard access.begin(url) else { throw GameDataError.permission }
+        do {
+            let layout = try access.inspect(url, full: true, progress: nil)
+            if let previous = grantedURL { access.end(previous) }
+            current = layout
+            grantedURL = url
+            return layout
+        } catch { access.end(url); throw error }
+    }
+    func clearSelection() {
+        if let url = grantedURL { access.end(url) }
+        current = nil
+        grantedURL = nil
+        bookmarks.clear()
     }
     func select(_ url: URL, progress: ((Int, Int) -> Void)? = nil) throws -> GameDataLayout {
         guard !started else { throw GameDataError.alreadyStarted }
@@ -139,5 +157,68 @@ final class GameDataSession {
         let fresh = try access.inspect(grantedURL, full: false, progress: nil)
         try apply(fresh)
         started = true
+    }
+}
+
+/// The validated source stays open while its manifest-listed files are installed.
+/// Packed shaders already verified in Application Support are shared with offline play.
+struct LocalGameData {
+    let root: URL
+    private var stage: URL { root.deletingLastPathComponent().appendingPathComponent(".ImportedGameData.partial") }
+    private let fm = FileManager.default
+
+    func install(from layout: GameDataLayout, progress: ((Int, Int) -> Void)? = nil,
+                 validate: (URL) throws -> Void) throws {
+        if fm.fileExists(atPath: root.path), (try? validate(root)) != nil { return }
+        if fm.fileExists(atPath: stage.path) { try fm.removeItem(at: stage) }
+        try fm.createDirectory(at: stage, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: stage) }
+        var scratch = stage
+        var settings = URLResourceValues()
+        settings.isExcludedFromBackup = true
+        try scratch.setResourceValues(settings)
+        let manifest = try Data(contentsOf: layout.root.appendingPathComponent("game-data.json"))
+        let data = try JSONDecoder().decode(GameDataManifest.self, from: manifest)
+        let rows = data.files.filter { layout.cachedMSL == nil || !$0.path.hasPrefix("msl/") }
+        let base = layout.root.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        var seen = Set<String>()
+        for (index, record) in rows.enumerated() {
+            guard GameDataValidator.safePath(record.path), seen.insert(record.path).inserted else {
+                throw GameDataError.unsafePath
+            }
+            let source = layout.root.appendingPathComponent(record.path).resolvingSymlinksInPath().standardizedFileURL
+            guard source.path.hasPrefix(base),
+                  let attrs = try? fm.attributesOfItem(atPath: source.path),
+                  attrs[.type] as? FileAttributeType == .typeRegular,
+                  (attrs[.size] as? NSNumber)?.int64Value == record.size else {
+                throw GameDataError.missingFile(record.path)
+            }
+            let destination = stage.appendingPathComponent(record.path)
+            try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: source, to: destination)
+            guard try ShaderCache.digest(file: destination) == record.sha256 else {
+                throw GameDataError.cacheIntegrity(record.path)
+            }
+            progress?(index + 1, rows.count)
+        }
+        try manifest.write(to: stage.appendingPathComponent("game-data.json"))
+        try validate(stage)
+        if fm.fileExists(atPath: root.path) { try fm.removeItem(at: root) }
+        try fm.moveItem(at: stage, to: root)
+    }
+
+    func clear(documents: URL, cache: URL?, extraSavePath: String?) throws {
+        // A LiveContainer host may expose a parent Documents directory. Never
+        // sweep unknown entries there, including other apps or containers.
+        let generated: Set<String> = ["romfs", "romfs.img", "aoc", "msl", "temp",
+                                      "log.txt", "log.prev.txt", "gpu_captures", "pso"]
+        let legacy = try fm.contentsOfDirectory(at: documents, includingPropertiesForKeys: nil)
+            .filter { generated.contains($0.lastPathComponent.lowercased()) }
+        let save = extraSavePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
+        for url in [root, stage] + [cache].compactMap({ $0 }) + legacy where fm.fileExists(atPath: url.path) {
+            let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+            if let save, save == path || save.hasPrefix(path + "/") { continue }
+            try fm.removeItem(at: url)
+        }
     }
 }

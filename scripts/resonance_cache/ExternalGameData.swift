@@ -11,6 +11,7 @@ private final class DefaultsGameDataBookmarks: GameDataBookmarks {
         UserDefaults.standard.set(data, forKey: key)
         guard UserDefaults.standard.data(forKey: key) == data else { throw GameDataError.unavailable }
     }
+    func clear() { UserDefaults.standard.removeObject(forKey: key) }
 }
 private final class ScopedGameDataAccess: GameDataAccess {
     let expected: GameDataIdentity
@@ -40,10 +41,15 @@ private final class ScopedGameDataAccess: GameDataAccess {
         try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
     }
     func inspect(_ url: URL, full: Bool, progress: ((Int, Int) -> Void)?) throws -> GameDataLayout {
+        try coordinate(url) { coordinated in
+            try GameDataValidator.validate(root: coordinated, expected: expected, marker: marker, full: full, progress: progress, shaderCache: shaderCache)
+        }
+    }
+    func coordinate<T>(_ url: URL, read: (URL) throws -> T) throws -> T {
         var failure: NSError?
-        var result: Result<GameDataLayout, Error>?
+        var result: Result<T, Error>?
         NSFileCoordinator(filePresenter: nil).coordinate(readingItemAt: url, options: .withoutChanges, error: &failure) { coordinated in
-            result = Result { try GameDataValidator.validate(root: coordinated, expected: expected, marker: marker, full: full, progress: progress, shaderCache: shaderCache) }
+            result = Result { try read(coordinated) }
         }
         if let failure = failure { throw failure }
         guard let result = result else { throw GameDataError.unavailable }
@@ -56,11 +62,14 @@ final class ExternalGameDataStore: ObservableObject {
     let enabled = (Bundle.main.object(forInfoDictionaryKey: "DMExternalGameData") as? Bool) == true
     @Published private(set) var ready = false
     @Published private(set) var busy = false
+    @Published private(set) var imported = false
     @Published private(set) var folderName = "No folder selected"
     @Published private(set) var message = "Choose the exported game data folder."
     private(set) var started = false
     private let queue = DispatchQueue(label: "org.nxnative.external-game-data")
     private var session: GameDataSession?
+    private var local: LocalGameData?
+    private var shaderCacheParent: URL?
     private var restored = false
     private init() {
         guard enabled,
@@ -69,11 +78,11 @@ final class ExternalGameDataStore: ObservableObject {
               let marker = Bundle.main.object(forInfoDictionaryKey: "DMExternalRomFSMarker") as? String else { return }
         let identity = GameDataIdentity(titleID: title, mainBuild: build, shaderChain: chain, shaderInputs: inputs)
         let digest = Bundle.main.object(forInfoDictionaryKey: "DMShaderCacheManifest") as? String
-        let cache = digest.flatMap { hash in
-            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first.map {
-                ShaderCache(parent: $0.appendingPathComponent("FFRSShaderCache", isDirectory: true), manifestDigest: hash)
-            }
-        }
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let cacheParent = support.appendingPathComponent("FFRSShaderCache", isDirectory: true)
+        let cache = digest.map { ShaderCache(parent: cacheParent, manifestDigest: $0) }
+        local = LocalGameData(root: support.appendingPathComponent("ImportedGameData", isDirectory: true))
+        shaderCacheParent = cacheParent
         session = GameDataSession(access: ScopedGameDataAccess(expected: identity, marker: marker, shaderCache: cache), bookmarks: DefaultsGameDataBookmarks())
     }
     func restoreIfNeeded() {
@@ -90,13 +99,76 @@ final class ExternalGameDataStore: ObservableObject {
                 let progress: (Int, Int) -> Void = { checked, total in
                     DispatchQueue.main.async { self.message = "Preparing game data and local shaders: \(checked)/\(total)" }
                 }
-                let layout = try selected.map { try session.select($0, progress: progress) } ?? session.restore(progress: progress)
+                let layout: GameDataLayout
+                if let selected {
+                    layout = try session.select(selected, progress: progress)
+                } else if let local = self.local, let installed = try? session.useLocal(local.root) {
+                    layout = installed
+                } else {
+                    layout = try session.restore(progress: progress)
+                }
                 DispatchQueue.main.async {
-                    self.folderName = layout.root.lastPathComponent; self.message = "Game data ready"; self.ready = true; self.busy = false
+                    self.showReady(layout)
                 }
             } catch {
                 fputs("external data: \(error.localizedDescription)\n", stderr)
                 DispatchQueue.main.async { self.message = error.localizedDescription; self.ready = false; self.busy = false }
+            }
+        }
+    }
+    private func showReady(_ layout: GameDataLayout) {
+        imported = layout.root.standardizedFileURL == local?.root.standardizedFileURL
+        folderName = imported ? "On this device" : layout.root.lastPathComponent
+        message = imported ? "Game data ready for offline play" : "Game data ready"
+        ready = true
+        busy = false
+    }
+    func importAll() {
+        guard ready, !busy, !started, let local, let session,
+              let access = session.access as? ScopedGameDataAccess else { return }
+        busy = true
+        message = "Importing game data..."
+        queue.async {
+            do {
+                guard let layout = session.current else { throw GameDataError.noSelection }
+                if layout.root.standardizedFileURL != local.root.standardizedFileURL {
+                    try access.coordinate(layout.root) { source in
+                        let coordinated = GameDataLayout(root: source, cachedMSL: layout.cachedMSL)
+                        try local.install(from: coordinated, progress: { count, total in
+                            DispatchQueue.main.async { self.message = "Imported \(count)/\(total) files" }
+                        }, validate: { url in
+                            _ = try GameDataValidator.validate(root: url, expected: access.expected, marker: access.marker,
+                                                               full: true, shaderCache: access.shaderCache)
+                        })
+                    }
+                }
+                let installed = try session.useLocal(local.root)
+                DispatchQueue.main.async { self.showReady(installed) }
+            } catch {
+                DispatchQueue.main.async { self.message = error.localizedDescription; self.busy = false }
+            }
+        }
+    }
+    func clearData() {
+        guard !busy, !started, let local, let session,
+              let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        busy = true
+        ready = false
+        message = "Clearing game data..."
+        let savePath = ProcessInfo.processInfo.environment["DM_SAVE"]
+        queue.async {
+            session.clearSelection()
+            let result = Result {
+                try local.clear(documents: documents, cache: self.shaderCacheParent, extraSavePath: savePath)
+            }
+            DispatchQueue.main.async {
+                self.imported = false
+                self.folderName = "No folder selected"
+                switch result {
+                case .success: self.message = "Game data cleared. Choose a folder to play again."
+                case .failure(let error): self.message = error.localizedDescription
+                }
+                self.busy = false
             }
         }
     }

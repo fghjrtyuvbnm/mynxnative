@@ -11,6 +11,16 @@ struct ShaderCache {
         SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
     }
 
+    static func digest(file: URL) throws -> String {
+        let stream = try FileHandle(forReadingFrom: file)
+        defer { try? stream.close() }
+        var hash = SHA256()
+        while let block = try stream.read(upToCount: 1024 * 1024), !block.isEmpty {
+            hash.update(data: block)
+        }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     func prepare(source: URL, manifest: GameDataManifest, progress: ((Int, Int) -> Void)?) throws -> URL {
         guard manifestDigest.count == 64, manifestDigest.allSatisfy({ $0.isASCII && $0.isHexDigit }) else {
             throw GameDataError.invalidManifest

@@ -1,5 +1,23 @@
 import Foundation
 
+private final class TestBookmarks: GameDataBookmarks {
+    var data: Data? = Data([1])
+    func read() -> Data? { data }
+    func write(_ data: Data) { self.data = data }
+    func clear() { data = nil }
+}
+
+private struct TestAccess: GameDataAccess {
+    let validate: (URL) throws -> GameDataLayout
+    func resolve(_ bookmark: Data) throws -> URL { throw GameDataError.unavailable }
+    func begin(_ url: URL) -> Bool { true }
+    func end(_ url: URL) {}
+    func bookmark(_ url: URL) throws -> Data { Data([1]) }
+    func inspect(_ url: URL, full: Bool, progress: ((Int, Int) -> Void)?) throws -> GameDataLayout {
+        try validate(url)
+    }
+}
+
 @main enum CacheTests {
     static func main() throws {
         let fm = FileManager.default
@@ -11,7 +29,7 @@ import Foundation
         let stamp = "msl/b-chain/inputs.tsv"
         let shader = "msl/b-chain/example_b.metallib"
         let marker = "Game/marker"
-        let originals = [stamp: Data("game\ttest\ninputs\tinputs\n".utf8), shader: Data([1,2,3]), "romfs/"+marker: Data([4])]
+        let originals = [stamp: Data("game\ttest\ninputs\tinputs\n".utf8), shader: Data([1,2,3]), "romfs/"+marker: Data([4]), "aoc/1.img": Data([5])]
         for (path, bytes) in originals {
             let file = source.appendingPathComponent(path)
             try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -56,6 +74,45 @@ import Foundation
         let fromPack = try inspect()
         let packedShader = try Data(contentsOf: fromPack.msl.appendingPathComponent("b-chain/example_b.metallib"))
         assert(packedShader == originals[shader])
+        let local = LocalGameData(root: root.appendingPathComponent("support/ImportedGameData"))
+        func validate(_ url: URL) throws -> GameDataLayout {
+            try GameDataValidator.validate(root: url, expected: id, marker: marker, full: true, shaderCache: cache)
+        }
+        let resource = source.appendingPathComponent("romfs/" + marker)
+        try Data([0]).write(to: resource)
+        do {
+            try local.install(from: fromPack, validate: { _ = try validate($0) })
+            fatalError("Same-length corrupt game data was imported")
+        } catch GameDataError.cacheIntegrity(_) {}
+        assert(!fm.fileExists(atPath: local.root.path))
+        try originals["romfs/" + marker]!.write(to: resource)
+        try local.install(from: fromPack, validate: { _ = try validate($0) })
+        try fm.moveItem(at: source, to: root.appendingPathComponent("disconnected"))
+        try local.install(from: fromPack, progress: { _, _ in fatalError("Import copied duplicate files") },
+                          validate: { _ = try validate($0) })
+        let bookmarks = TestBookmarks()
+        let session = GameDataSession(access: TestAccess(validate: validate), bookmarks: bookmarks)
+        let offline = try session.useLocal(local.root)
+        assert(offline.msl == fromPack.msl)
+        assert(!fm.fileExists(atPath: local.root.appendingPathComponent("msl").path))
+        assert(fm.fileExists(atPath: offline.aoc!.appendingPathComponent("1.img").path))
+        let playing = GameDataSession(access: TestAccess(validate: validate), bookmarks: bookmarks)
+        _ = try playing.useLocal(local.root)
+        try playing.start { assert($0.root == local.root) }
+        let docs = root.appendingPathComponent("Documents")
+        try fm.createDirectory(at: docs.appendingPathComponent("save"), withIntermediateDirectories: true)
+        try Data([6]).write(to: docs.appendingPathComponent("save/file"))
+        try Data([7]).write(to: docs.appendingPathComponent("env.txt"))
+        try Data([8]).write(to: docs.appendingPathComponent("log.txt"))
+        session.clearSelection()
+        try local.clear(documents: docs, cache: parent, extraSavePath: nil)
+        assert(session.current == nil && bookmarks.read() == nil)
+        assert(!fm.fileExists(atPath: local.root.path) && !fm.fileExists(atPath: parent.path))
+        assert(!fm.fileExists(atPath: docs.appendingPathComponent("log.txt").path))
+        assert(fm.fileExists(atPath: docs.appendingPathComponent("save/file").path))
+        assert(fm.fileExists(atPath: docs.appendingPathComponent("env.txt").path))
+        assert(fm.fileExists(atPath: root.appendingPathComponent("disconnected/aoc/1.img").path))
+        print("PASS: full import, offline launch, reuse, and save-preserving clear")
         print("PASS: failed copy, stale partial recovery, atomic commit and reuse with external ROMFS")
     }
 }
