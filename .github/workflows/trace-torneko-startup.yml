@@ -1,0 +1,91 @@
+name: Trace Torneko allocator startup
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: torneko-allocator-trace
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    if: github.event.repository.private == false
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: seedds/nxnative
+          ref: cde88f62068e3d879b083b1a86a7fd78610c7b7b
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: build-config
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.14'
+      - name: Install Apple build tools
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          brew install xcodegen zstd glslang
+          if ! dotnet --list-sdks | grep -q '^10\.'; then brew install dotnet@10; echo "$(brew --prefix dotnet@10)/bin" >> "$GITHUB_PATH"; fi
+          python -m pip install lz4 'capstone>=5,<6' fonttools requests cryptography
+          if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
+          python dm/gfx/tools/own_compilers.py --check-metal
+      - name: Apply and test allocator registration fix
+        run: |
+          git apply --check build-config/.github/torneko-allocator.patch
+          git apply build-config/.github/torneko-allocator.patch
+          python build-config/scripts/check_torneko_allocator.py
+          python build-config/scripts/trace_torneko_startup.py
+      - name: Restore encrypted Windows-prepared input
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          import requests
+          sys.path.insert(0, 'build-config/scripts')
+          from ipa_crypto import transform
+          dest = Path(os.environ['RUNNER_TEMP'])
+          encrypted = dest / 'prepared.tar.xz.enc'
+          parts = sorted(Path('build-config/build-input-torneko').rglob('part-*'))
+          assert parts, 'Missing encrypted prepared inputs'
+          with encrypted.open('wb') as output:
+              for part in parts:
+                  output.write(part.read_bytes())
+          transform(encrypted, dest / 'prepared.tar.xz', bytes.fromhex(os.environ['BUILD_CIPHER_KEY']), True)
+          encrypted.unlink()
+          PY
+      - name: Run guest allocator trace
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/game"
+          tar -xf "$RUNNER_TEMP/prepared.tar.xz" -C "$RUNNER_TEMP/game"
+          export DM_GAME=010040B0270A2000
+          export DM_GAMES_DIR="$RUNNER_TEMP/game/profile" DM_GAMES_FIRST=1
+          export DM_ROOT="$RUNNER_TEMP/game" DM_ROMFS="$RUNNER_TEMP/game/extract/v0/RomFS"
+          export DM_SAVE="$RUNNER_TEMP/save" DM_TEMP="$RUNNER_TEMP/scratch"
+          export DM_ALIAS_SIZE=0x118000000 DM_LANG=en-GB
+          mkdir -p "$DM_SAVE" "$DM_TEMP"
+          make -C dm/host -j4 GAME="$DM_GAME" dmhost
+          python - <<'PY'
+          import os, subprocess
+          root = os.environ['DM_ROOT']
+          with open(os.environ['RUNNER_TEMP'] + '/trace.log', 'w') as log:
+              try:
+                  run = subprocess.run(['dm/host/dmhost', root + '/patched_v0'], stdout=log, stderr=log, timeout=50)
+                  print('Diagnostic process returned', run.returncode)
+              except subprocess.TimeoutExpired:
+                  print('Diagnostic process reached its time limit')
+          PY
+          grep -E 'Torneko trace|WATCH|nnMain|FATAL|CRASH|\[RED\]|mount rom:' "$RUNNER_TEMP/trace.log" | tail -70
