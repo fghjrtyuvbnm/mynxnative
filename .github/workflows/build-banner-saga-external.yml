@@ -43,6 +43,12 @@ jobs:
           if ! dotnet --list-sdks | grep -q '^10\.'; then brew install dotnet@10; echo "$(brew --prefix dotnet@10)/bin" >> "$GITHUB_PATH"; fi
           if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
           python -m pip install lz4 capstone fonttools cryptography requests
+      - name: Test OpenGL source versions
+        run: |
+          git apply build-config/.github/banner-saga-gl-es300.patch
+          cp build-config/dm/tools/tests/test_gl_es300.py dm/tools/tests/
+          DM_GAME=010014E00DB56000 python dm/tools/tests/test_gl_es300.py -v
+          git apply --reverse build-config/.github/banner-saga-gl-es300.patch
       - name: Restore authenticated linking inputs
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}

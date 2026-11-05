@@ -49,6 +49,7 @@ def main(repo, archive, work, output):
     import profile_guess, nacp
     build.pg, build.nacp = profile_guess, nacp
     build.chain_header(Path(sys.executable), repo, env, logs)
+    subprocess.run(['git','-C',str(repo),'apply',str(Path(__file__).resolve().parents[2]/'.github/banner-saga-gl-es300.patch')],check=True)
     roots = [extract/'RomFS', extract/'ExeFS/main']
     ios = build.build_gl_shaders(Path(sys.executable), repo, roots, work/'shader', env, logs, g, provisional=True)
     import gl_shaders
