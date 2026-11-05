@@ -13,6 +13,15 @@ struct GameDataManifest: Codable {
     let identity: GameDataIdentity
     let files: [GameDataFile]
     enum CodingKeys: String, CodingKey { case formatVersion = "format_version", identity, files }
+
+    func shaderPrefix() throws -> String {
+        let candidates = ["msl/b-\(identity.shaderChain)/", "msl/gl/"]
+        let matches = candidates.filter { prefix in files.contains { $0.path == prefix + "inputs.tsv" } }
+        guard matches.count == 1, files.allSatisfy({ !$0.path.hasPrefix("msl/") || $0.path.hasPrefix(matches[0]) }) else {
+            throw GameDataError.invalidManifest
+        }
+        return matches[0]
+    }
 }
 struct GameDataLayout {
     let root: URL
@@ -74,7 +83,7 @@ enum GameDataValidator {
         if let cache = shaderCache, ShaderCache.digest(data) != cache.manifestDigest { throw GameDataError.wrongBuild }
         guard manifest.identity == expected else { throw GameDataError.wrongBuild }
         let romfsMarker = "romfs/" + marker
-        let stamp = "msl/b-\(expected.shaderChain)/inputs.tsv"
+        let stamp = try manifest.shaderPrefix() + "inputs.tsv"
         let names = Set(manifest.files.map(\.path))
         let image = names.contains("romfs.img")
         guard names.count == manifest.files.count, names.contains(stamp),

@@ -31,6 +31,22 @@ import Foundation
         catch { fatalError("OpenGL packed data was rejected: \(error)") }
         let shader = try Data(contentsOf: first.msl.appendingPathComponent("gl/gl_shaders.metallib"))
         assert(shader == values["msl/gl/gl_shaders.metallib"])
+        // Reject a manifest mixing graphics layouts, including when the
+        // individual files and pack are otherwise complete and well hashed.
+        let extraBytes = values["msl/gl/inputs.tsv"]!
+        let mixedRows = rows + [GameDataFile(path: "msl/b-chain/inputs.tsv", size: Int64(extraBytes.count), sha256: ShaderCache.digest(extraBytes))]
+        let mixed = try JSONEncoder().encode(GameDataManifest(formatVersion: 1, identity: id, files: mixedRows))
+        try mixed.write(to: source.appendingPathComponent("game-data.json"))
+        var mixedPack = pack
+        mixedPack.append(extraBytes)
+        try mixedPack.write(to: source.appendingPathComponent("shaders.pack"))
+        let mixedCache = ShaderCache(parent: root.appendingPathComponent("mixed-cache"), manifestDigest: ShaderCache.digest(mixed))
+        do {
+            _ = try GameDataValidator.validate(root: source, expected: id, marker: "marker", full: true, shaderCache: mixedCache)
+            fatalError("Mixed NVN and OpenGL shader layouts were accepted")
+        } catch GameDataError.invalidManifest { }
+        try manifest.write(to: source.appendingPathComponent("game-data.json"))
+        try pack.write(to: source.appendingPathComponent("shaders.pack"))
         let local = LocalGameData(root: root.appendingPathComponent("support/ImportedGameData"))
         try local.install(from: first, validate: { _ = try validate($0) })
         try fm.moveItem(at: source, to: root.appendingPathComponent("disconnected"))

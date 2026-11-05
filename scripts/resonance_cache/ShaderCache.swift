@@ -34,7 +34,8 @@ struct ShaderCache {
         let stage = cacheRoot.appendingPathComponent(".\(manifestDigest).partial", isDirectory: true)
         let receiptName = "verified-manifest.sha256"
         let receipt = Data(manifestDigest.utf8)
-        let stamp = "msl/b-\(manifest.identity.shaderChain)/inputs.tsv"
+        let prefix = try manifest.shaderPrefix()
+        let stamp = prefix + "inputs.tsv"
         let rows = manifest.files.filter { $0.path.hasPrefix("msl/") }
         guard let stampRow = rows.first(where: { $0.path == stamp }), rows.count > 1 else {
             throw GameDataError.invalidManifest
@@ -48,7 +49,7 @@ struct ShaderCache {
         if fm.fileExists(atPath: final.path) { try fm.removeItem(at: final) }
         var total: Int64 = 0
         for row in rows {
-            guard GameDataValidator.safePath(row.path), row.path.hasPrefix("msl/b-\(manifest.identity.shaderChain)/"),
+            guard GameDataValidator.safePath(row.path), row.path.hasPrefix(prefix),
                   row.size >= 0, row.size <= 16 * 1024 * 1024, row.sha256.count == 64 else {
                 throw GameDataError.invalidManifest
             }
