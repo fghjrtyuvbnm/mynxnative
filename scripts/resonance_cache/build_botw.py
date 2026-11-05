@@ -37,7 +37,8 @@ def main(repo, archive, work, output):
     g = game.load(TITLE)
     spec = importlib.util.spec_from_file_location('upstream_builder', repo/'scripts/build_ipa_from_nsp.py')
     build = importlib.util.module_from_spec(spec); spec.loader.exec_module(build)
-    env = dict(os.environ, GAME=TITLE, DM_GAME=TITLE, DM_ROOT=str(work), WORK=str(work/'tmp'), J='3')
+    env = dict(os.environ, GAME=TITLE, DM_GAME=TITLE, DM_ROOT=str(work), WORK=str(work/'tmp'),
+               J=str(min(6, os.cpu_count() or 3)))
     (work/'tmp').mkdir()
     logs = work/'logs'; logs.mkdir()
     build.PROG.mode = 'lines'; build.PROG.plan(5)
