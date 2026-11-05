@@ -13,8 +13,8 @@ import zipfile
 
 SOURCE = 'cde88f62068e3d879b083b1a86a7fd78610c7b7b'
 TITLE = '0100F3400332C000'
-VERSION = 'v0'
-EXPECTED_VERSION = '1.0.0'
+VERSION = 'v917504'
+EXPECTED_VERSION = '2.0.2'
 APP = 'Payload/DmIOS.app/'
 
 
@@ -86,7 +86,7 @@ def main(repo, archive, work, output):
     display = 'Xenoblade Chronicles 2'
     env.update(W=str(work/'ipa'), PATCHED=str(patch), ROMFS=str(extract/'RomFS'), MSL_IOS=str(ios),
                GFXAPI='nvn', FONT_PY=sys.executable, DM_DISPLAY_NAME=display,
-               DM_BUNDLE_ID='org.nxnative.'+TITLE.lower(), DM_APP_VERSION='1.0.0', DM_LANG='ja', DM_PSO_GPUS='none',
+               DM_BUNDLE_ID='org.nxnative.'+TITLE.lower(), DM_APP_VERSION='2.0.2', DM_LANG='ja', DM_PSO_GPUS='none',
                DM_ENTITLEMENTS='', DM_ICON=str(extract/'icon.jpg'), AOC='', DM_COPY_ROMFS='NO',
                DM_XCODE_DERIVED_DATA=str(work/'xcode-dd'))
     def run(*args):
