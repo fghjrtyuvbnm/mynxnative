@@ -1,0 +1,21 @@
+name: Test external OpenGL data management
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: xcode-27
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Existing NVN lifecycle regression
+        run: |
+          xcrun swiftc scripts/resonance_cache/{GameDataCore,ShaderCache,ShaderCacheTests}.swift -o "$RUNNER_TEMP/nvn-tests"
+          "$RUNNER_TEMP/nvn-tests"
+      - name: OpenGL packed import lifecycle
+        run: |
+          xcrun swiftc scripts/resonance_cache/{GameDataCore,ShaderCache,GLShaderCacheTests}.swift -o "$RUNNER_TEMP/gl-tests"
+          "$RUNNER_TEMP/gl-tests"
