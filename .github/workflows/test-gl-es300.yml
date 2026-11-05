@@ -1,0 +1,28 @@
+name: Test OpenGL ES shader versions
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      DM_GAME: '010014E00DB56000'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: seedds/nxnative
+          ref: cde88f62068e3d879b083b1a86a7fd78610c7b7b
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: build-config
+          persist-credentials: false
+      - name: Install compiler
+        run: brew install glslang
+      - name: Compile version regression fixtures
+        run: |
+          cp build-config/dm/tools/tests/test_gl_es300.py dm/tools/tests/
+          python3 dm/tools/tests/test_gl_es300.py -v
