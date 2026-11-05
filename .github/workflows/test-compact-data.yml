@@ -1,0 +1,34 @@
+name: Test compact data and device gyro
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: xcode-27
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: seedds/nxnative
+          ref: cde88f62068e3d879b083b1a86a7fd78610c7b7b
+          path: upstream
+          persist-credentials: false
+      - name: Test import and clear for both resource layouts
+        run: |
+          dir=scripts/resonance_cache
+          xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" "$dir/ShaderCacheTests.swift" -o "$RUNNER_TEMP/data-tests"
+          "$RUNNER_TEMP/data-tests"
+      - name: Test actual launcher model with the default policy
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          sys.path.insert(0, 'scripts')
+          from package_policy import DEVICE_GYRO, install_launcher_policy
+          from pathlib import Path
+          install_launcher_policy(Path('upstream'))
+          Path('settings.json').write_text(json.dumps({'settings':[DEVICE_GYRO]}))
+          PY
+          xcrun swiftc upstream/dm/ios/Sources/LauncherSettings.swift scripts/resonance_cache/DeviceGyroTests.swift -o "$RUNNER_TEMP/gyro-tests"
+          "$RUNNER_TEMP/gyro-tests" settings.json

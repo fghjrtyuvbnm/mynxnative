@@ -20,6 +20,10 @@ private struct TestAccess: GameDataAccess {
 
 @main enum CacheTests {
     static func main() throws {
+        try scenario(image: false)
+        try scenario(image: true)
+    }
+    static func scenario(image: Bool) throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? fm.removeItem(at: root) }
@@ -29,7 +33,8 @@ private struct TestAccess: GameDataAccess {
         let stamp = "msl/b-chain/inputs.tsv"
         let shader = "msl/b-chain/example_b.metallib"
         let marker = "Game/marker"
-        let originals = [stamp: Data("game\ttest\ninputs\tinputs\n".utf8), shader: Data([1,2,3]), "romfs/"+marker: Data([4]), "aoc/1.img": Data([5])]
+        let gamePath = image ? "romfs.img" : "romfs/" + marker
+        let originals = [stamp: Data("game\ttest\ninputs\tinputs\n".utf8), shader: Data([1,2,3]), gamePath: Data([4]), "aoc/1.img": Data([5])]
         for (path, bytes) in originals {
             let file = source.appendingPathComponent(path)
             try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -78,14 +83,14 @@ private struct TestAccess: GameDataAccess {
         func validate(_ url: URL) throws -> GameDataLayout {
             try GameDataValidator.validate(root: url, expected: id, marker: marker, full: true, shaderCache: cache)
         }
-        let resource = source.appendingPathComponent("romfs/" + marker)
+        let resource = source.appendingPathComponent(gamePath)
         try Data([0]).write(to: resource)
         do {
             try local.install(from: fromPack, validate: { _ = try validate($0) })
             fatalError("Same-length corrupt game data was imported")
         } catch GameDataError.cacheIntegrity(_) {}
         assert(!fm.fileExists(atPath: local.root.path))
-        try originals["romfs/" + marker]!.write(to: resource)
+        try originals[gamePath]!.write(to: resource)
         try local.install(from: fromPack, validate: { _ = try validate($0) })
         try fm.moveItem(at: source, to: root.appendingPathComponent("disconnected"))
         try local.install(from: fromPack, progress: { _, _ in fatalError("Import copied duplicate files") },
@@ -93,6 +98,7 @@ private struct TestAccess: GameDataAccess {
         let bookmarks = TestBookmarks()
         let session = GameDataSession(access: TestAccess(validate: validate), bookmarks: bookmarks)
         let offline = try session.useLocal(local.root)
+        assert(offline.romfs.lastPathComponent == (image ? "romfs.img" : "romfs"))
         assert(offline.msl == fromPack.msl)
         assert(!fm.fileExists(atPath: local.root.appendingPathComponent("msl").path))
         assert(fm.fileExists(atPath: offline.aoc!.appendingPathComponent("1.img").path))

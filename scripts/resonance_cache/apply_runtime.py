@@ -13,6 +13,9 @@ def apply(repo, source=SOURCE):
     repo=pathlib.Path(repo).resolve()
     if subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()!=source:raise ValueError('Unexpected runtime base source')
     sources=repo/'dm/ios/Sources';runtime=pathlib.Path(__file__).resolve().parent
+    sys.path.insert(0,str(runtime.parent))
+    from package_policy import install_launcher_policy
+    install_launcher_policy(repo)
     for name in ('GameDataCore.swift','ExternalGameData.swift','ShaderCache.swift'):shutil.copyfile(runtime/name,sources/name)
     main=sources/'main.m';text=main.read_text(encoding='utf-8')
     if 'dm_external_data_configured' not in text:
