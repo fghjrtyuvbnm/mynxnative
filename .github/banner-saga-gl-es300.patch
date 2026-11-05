@@ -1,0 +1,14 @@
+diff --git a/dm/gfx/tools/gl_shaders.py b/dm/gfx/tools/gl_shaders.py
+index 0a87351d..2f89404d 100644
+--- a/dm/gfx/tools/gl_shaders.py
++++ b/dm/gfx/tools/gl_shaders.py
+@@ -141,6 +141,9 @@ def translate(src, stage, key, tmp):
+     r = subprocess.run(['glslangValidator', '-E', '-S', stage, g + '.in'], capture_output=True, text=True)
+     if r.returncode: return 'glslang -E: ' + ' | '.join(l for l in (r.stdout + r.stderr).splitlines() if 'ERROR' in l and 'compilation' not in l)[:400]
+     pre = r.stdout[r.stdout.find('#version'):]   # warnings come first
++    # SPIR-V requires ES 3.10. Preprocess ES 3.00 first so __VERSION__ selects
++    # the game's original branches; its in/out interface already uses modern GLSL.
++    pre = re.sub(r'(?m)^(#version[ \t]+)300([ \t]+es\b)', r'\g<1>310\2', pre)
+     open(g, 'w').write(fixups(pre))
+     r = subprocess.run(['glslangValidator', '-V', '-R', '--aml', '--amb', '-S', stage, g, '-o', spv], capture_output=True, text=True)
+     if r.returncode: return 'glslang: ' + ' | '.join(l for l in (r.stdout + r.stderr).splitlines() if 'ERROR' in l and 'compilation' not in l)[:400]
