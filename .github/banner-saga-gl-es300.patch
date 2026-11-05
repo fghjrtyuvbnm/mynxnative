@@ -1,5 +1,5 @@
 diff --git a/dm/gfx/gl/hle_gl.m b/dm/gfx/gl/hle_gl.m
-index f3e38a12..6db0c0e6 100644
+index f3e38a12..80da5b11 100644
 --- a/dm/gfx/gl/hle_gl.m
 +++ b/dm/gfx/gl/hle_gl.m
 @@ -154,7 +154,7 @@ static int is_samp(int t) { return t >= T_SAMP2D && t < T_OTHER; }
@@ -34,25 +34,44 @@ index f3e38a12..6db0c0e6 100644
  typedef struct { uint32_t vf[16]; uint16_t stride[16]; uint8_t div[16]; uint32_t cpf, dpf, spf; uint8_t blend, mask, bsrc, bdst, bsa, bda, eqc, eqa; } pkey_t;
  typedef struct { pkey_t k; void *pso; } pent_t;   // pso: a retained id<MTLRenderPipelineState>, NULL = failed
  // amap: the game's attribute index of each Metal vertex input (glBindAttribLocation before the link, else the input's own number, which glGetAttribLocation returns);
-@@ -884,7 +889,8 @@ static void bind_uniforms_textures(prog_t *p) {
+@@ -884,22 +889,24 @@ static void bind_uniforms_textures(prog_t *p) {
      for (int i = 0; i < p->nu; i++) {
          puni_t *u = &p->u[i];
          if (!is_samp(u->type)) continue;
 -        int unit = u->unit < 0 || u->unit >= NUNITS ? 0 : u->unit;
-+        for (int el = 0; el < (u->count ? u->count : 1); el++) {
-+        int unit = u->units[el] < 0 || u->units[el] >= NUNITS ? 0 : u->units[el];
-         GLenum target = u->type == T_SAMPCUBE ? GL_TEXTURE_CUBE_MAP : u->type == T_SAMP3D ? GL_TEXTURE_3D : u->type == T_SAMP2DARR ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
-         tex_t *t = tex_of(*unit_slot(unit, target));
-         id<MTLTexture> tx = nil; id<MTLSamplerState> sm = g_samp0;
-@@ -898,8 +904,9 @@ static void bind_uniforms_textures(prog_t *p) {
-                 GLOG("program %u sampler %s (unit %d) has no texture: drawing the 1x1 black placeholder", p->serial, u->name, unit); } }
-         for (int st = 0; st < 2; st++) {
-             if (u->slot[st] < 0) continue;
+-        GLenum target = u->type == T_SAMPCUBE ? GL_TEXTURE_CUBE_MAP : u->type == T_SAMP3D ? GL_TEXTURE_3D : u->type == T_SAMP2DARR ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+-        tex_t *t = tex_of(*unit_slot(unit, target));
+-        id<MTLTexture> tx = nil; id<MTLSamplerState> sm = g_samp0;
+-        if (t && (t->made || tex_make(t, 0)) && t->tex) { tx = t->tex; sm = tex_sampler(t); t->use = g_serial; }
+-        if (!tx) tx = u->type == T_SAMPCUBE ? g_cube0 : u->type == T_SAMP3D ? g_tex3d0 : u->type == T_SAMP2DARR ? g_arr0 : g_tex0;
+-        static int dl = -1; if (dl < 0) dl = getenv("DM_GL_DRAWLOG") != NULL;
+-        if (dl && tx == g_tex0 && t == NULL) {   // a sampler with no texture: the layer draws the 1x1 black placeholder
+-            static uint32_t seen_p[64]; static int seen_u[64], nseen;
+-            int dup = 0; for (int k = 0; k < nseen; k++) if (seen_p[k] == p->serial && seen_u[k] == unit) dup = 1;
+-            if (!dup && nseen < 64) { seen_p[nseen] = p->serial; seen_u[nseen++] = unit;
+-                GLOG("program %u sampler %s (unit %d) has no texture: drawing the 1x1 black placeholder", p->serial, u->name, unit); } }
+-        for (int st = 0; st < 2; st++) {
+-            if (u->slot[st] < 0) continue;
 -            if (st) { [e setFragmentTexture:tx atIndex:u->slot[st]]; [e setFragmentSamplerState:sm atIndex:u->slot[st]]; }
 -            else { [e setVertexTexture:tx atIndex:u->slot[st]]; [e setVertexSamplerState:sm atIndex:u->slot[st]]; }
-+            if (st) { [e setFragmentTexture:tx atIndex:u->slot[st]+el]; [e setFragmentSamplerState:sm atIndex:u->slot[st]+el]; }
-+            else { [e setVertexTexture:tx atIndex:u->slot[st]+el]; [e setVertexSamplerState:sm atIndex:u->slot[st]+el]; }
-+        }
++        for (int el = 0; el < (u->count ? u->count : 1); el++) {
++            int unit = u->units[el] < 0 || u->units[el] >= NUNITS ? 0 : u->units[el];
++            GLenum target = u->type == T_SAMPCUBE ? GL_TEXTURE_CUBE_MAP : u->type == T_SAMP3D ? GL_TEXTURE_3D : u->type == T_SAMP2DARR ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
++            tex_t *t = tex_of(*unit_slot(unit, target));
++            id<MTLTexture> tx = nil; id<MTLSamplerState> sm = g_samp0;
++            if (t && (t->made || tex_make(t, 0)) && t->tex) { tx = t->tex; sm = tex_sampler(t); t->use = g_serial; }
++            if (!tx) tx = u->type == T_SAMPCUBE ? g_cube0 : u->type == T_SAMP3D ? g_tex3d0 : u->type == T_SAMP2DARR ? g_arr0 : g_tex0;
++            static int dl = -1; if (dl < 0) dl = getenv("DM_GL_DRAWLOG") != NULL;
++            if (dl && tx == g_tex0 && t == NULL) {   // a sampler with no texture: the layer draws the 1x1 black placeholder
++                static uint32_t seen_p[64]; static int seen_u[64], nseen;
++                int dup = 0; for (int k = 0; k < nseen; k++) if (seen_p[k] == p->serial && seen_u[k] == unit) dup = 1;
++                if (!dup && nseen < 64) { seen_p[nseen] = p->serial; seen_u[nseen++] = unit;
++                    GLOG("program %u sampler %s (unit %d) has no texture: drawing the 1x1 black placeholder", p->serial, u->name, unit); } }
++            for (int st = 0; st < 2; st++) {
++                if (u->slot[st] < 0) continue;
++                if (st) { [e setFragmentTexture:tx atIndex:u->slot[st]+el]; [e setFragmentSamplerState:sm atIndex:u->slot[st]+el]; }
++                else { [e setVertexTexture:tx atIndex:u->slot[st]+el]; [e setVertexSamplerState:sm atIndex:u->slot[st]+el]; }
++            }
          }
      }
      E.prog = p->serial;
@@ -99,13 +118,8 @@ index f3e38a12..6db0c0e6 100644
      int st = u->off[0] >= 0 ? 0 : 1; if (u->off[st] < 0) return;
      int cols = u->type == T_MAT4 ? 4 : u->type == T_MAT3 ? 3 : u->type == T_MAT2 ? 2 : 0, rows = cols ? cols : tcomps(u->type);
      const uint8_t *d = p->ub[st] + u->off[st] + (size_t)el * (u->stride[st] ? u->stride[st] : cols ? cols * 16 : 16);
-@@ -2067,3 +2081,4 @@ EGL(eglGetProcAddress, void *, const char *name) {
-     pthread_mutex_unlock(&mu);
-     return fn;
- }
-+
 diff --git a/dm/gfx/tools/gl_shaders.py b/dm/gfx/tools/gl_shaders.py
-index 0a87351d..bf92023a 100644
+index 0a87351d..889a20cb 100644
 --- a/dm/gfx/tools/gl_shaders.py
 +++ b/dm/gfx/tools/gl_shaders.py
 @@ -18,7 +18,7 @@
@@ -117,7 +131,7 @@ index 0a87351d..bf92023a 100644
  #   o:<name>=<location>                          a fragment output, [[color(location)]]
  # <TAB> where it came from
  # Usage: gl_shaders.py <input path>... <out dir> [--ios <dir>]   (input paths: the RomFS, the main NSO, capture folders)
-@@ -141,11 +141,29 @@ def translate(src, stage, key, tmp):
+@@ -141,15 +141,39 @@ def translate(src, stage, key, tmp):
      r = subprocess.run(['glslangValidator', '-E', '-S', stage, g + '.in'], capture_output=True, text=True)
      if r.returncode: return 'glslang -E: ' + ' | '.join(l for l in (r.stdout + r.stderr).splitlines() if 'ERROR' in l and 'compilation' not in l)[:400]
      pre = r.stdout[r.stdout.find('#version'):]   # warnings come first
@@ -142,12 +156,22 @@ index 0a87351d..bf92023a 100644
 +            count = arr[0] if arr else 1
 +            if slot + count > 16: return 'texture/sampler slots exceed 16'
 +            slots[t['name']] = slot
-+            cmd += ['--msl-resource-binding', str(t.get('set', 0)), str(t['binding']), str(t['binding']), str(slot), str(slot)]
 +            slot += count
      if stage == 'vert': cmd.append('--fixup-clipspace')
      r = subprocess.run(cmd, capture_output=True, text=True)
      if r.returncode: return 'spirv-cross: ' + r.stderr.strip()[:300]
-@@ -167,9 +185,9 @@ def translate(src, stage, key, tmp):
+     m = open(msl).read()
++    if slots:
++        # The pinned converter exposes decoration bindings, but predates the CLI
++        # resource-binding override. Remap only texture/sampler annotations; buffer
++        # bindings have their own Metal namespace and remain unchanged.
++        bindings = {t['binding']: slots[t['name']] for t in textures}
++        m = re.sub(r'\[\[(texture|sampler)\((\d+)\)\]\]',
++                   lambda x: f'[[{x[1]}({bindings[int(x[2])]})]]', m)
+     # Varyings by name: the out struct of a vertex shader and the in struct of a fragment shader (stage_in members of a vertex shader are [[attribute(n)]])
+     m = re.sub(r'(\b(\w+)\s+\[\[)user\(locn\d+\)', lambda x: f'{x.group(1)}user({x.group(2)})', m)
+     m = re.sub(r'\bfast::(min|max|clamp)\(', r'precise::\1(', m)   # a NaN operand gives the other one, as on the Switch's GPU (vk_shaders.py PRECISE)
+@@ -167,9 +191,9 @@ def translate(src, stage, key, tmp):
          f.append(f'b:{u["binding"]}:{u["block_size"]}')
          e = uni_members(refl, t['members'], '', 0, f, bools)
          if e: return e
