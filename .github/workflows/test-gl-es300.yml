@@ -21,9 +21,18 @@ jobs:
           path: build-config
           persist-credentials: false
       - name: Install compiler
-        run: brew install glslang
+        run: |
+          brew install glslang
+          if ! xcrun -sdk macosx metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
       - name: Compile version regression fixtures
         run: |
           git apply build-config/.github/banner-saga-gl-es300.patch
           cp build-config/dm/tools/tests/test_gl_es300.py dm/tools/tests/
           python3 dm/tools/tests/test_gl_es300.py -v
+      - name: Sampler array uniform regression
+        if: always()
+        run: |
+          cp build-config/dm/gfx/tests/t_gl_sampler_arrays.m dm/gfx/tests/
+          git apply build-config/.github/banner-saga-gl-tests.patch
+          make -C dm/gfx/tests GAME=010014E00DB56000 t_gl_sampler_arrays
+          dm/gfx/tests/t_gl_sampler_arrays
