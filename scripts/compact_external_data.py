@@ -30,6 +30,8 @@ def consolidate(ipa,data):
             if child.is_dir():
                 if not child.name.isdecimal(): raise ValueError('Unexpected DLC directory')
                 groups.append(('aoc/'+child.name+'/', 'aoc/'+child.name+'.img'))
+    if (data/'msl').is_dir() and not (data/'shaders.pack').exists():
+        groups.append(('msl/','shaders.pack'))
     backup_manifest=manifest_path.with_name('game-data.json.precompact')
     backup_ipa=ipa.with_name(ipa.name+'.precompact')
     if backup_manifest.exists() or backup_ipa.exists(): raise ValueError('Previous consolidation needs recovery')
@@ -48,6 +50,26 @@ def consolidate(ipa,data):
                     raise ValueError('Linked game resource')
             image=temp/f'{number}.img'
             print('Consolidating',prefix,flush=True)
+            if prefix=='msl/':
+                rows=[r for r in manifest['files'] if r['path'].startswith(prefix)]
+                if {p.relative_to(data).as_posix() for p in source.rglob('*') if p.is_file()} != {r['path'] for r in rows}:
+                    raise ValueError('Shader resource set differs')
+                with image.open('xb') as output:
+                    output.write(b'FFRSMSL1')
+                    for row in rows:
+                        resource=data/row['path']
+                        if resource.stat().st_size!=row['size'] or digest(resource)!=row['sha256']:
+                            raise ValueError('Shader resource differs: '+row['path'])
+                        with resource.open('rb') as stream: shutil.copyfileobj(stream,output,8<<20)
+                with image.open('rb') as stream:
+                    if stream.read(8)!=b'FFRSMSL1': raise ValueError('Invalid shader pack')
+                    for row in rows:
+                        raw=stream.read(row['size'])
+                        if len(raw)!=row['size'] or hashlib.sha256(raw).hexdigest()!=row['sha256']:
+                            raise ValueError('Packed shader differs: '+row['path'])
+                    if stream.read(1): raise ValueError('Trailing shader bytes')
+                images.append((image,data/image_name,None,source))
+                continue
             romfs_image.pack(source,image)
             index=romfs_image.read_index(image)
             expected={r['path'][len(prefix):]:r for r in manifest['files'] if r['path'].startswith(prefix)}
@@ -61,8 +83,8 @@ def consolidate(ipa,data):
             images.append((image,data/image_name,row,source))
             print('Verified consolidated image:',image_name,len(expected),'resources',flush=True)
         updated=dict(manifest)
-        updated['files']=[r for r in manifest['files'] if not any(r['path'].startswith(prefix) for prefix,_ in groups)]
-        updated['files'] += [row for _,_,row,_ in images]
+        updated['files']=[r for r in manifest['files'] if not any(r['path'].startswith(prefix) for prefix,_ in groups if prefix!='msl/')]
+        updated['files'] += [row for _,_,row,_ in images if row is not None]
         raw=json.dumps(updated,separators=(',',':')).encode()
         new_manifest=temp/'game-data.json';new_manifest.write_bytes(raw)
         new_ipa=temp/'updated.ipa';patch_ipa(ipa,new_ipa,hashlib.sha256(raw).hexdigest())
@@ -91,7 +113,7 @@ def consolidate(ipa,data):
         for _,_,_,source in images:
             if not source.resolve().is_relative_to(data) or source.resolve()==data: raise ValueError('Unsafe cleanup target')
             shutil.rmtree(source)
-    result=dict(ipa=str(ipa),data=str(data),images=[r['path'] for _,_,r,_ in images],
+    result=dict(ipa=str(ipa),data=str(data),images=[str(p.relative_to(data)) for _,p,_,_ in images],
                 files=sum(p.is_file() for p in data.rglob('*')),device_gyro_default=True)
     print('Compact external package ready:',json.dumps(result),flush=True)
     return result
