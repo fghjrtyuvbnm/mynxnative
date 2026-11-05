@@ -36,3 +36,7 @@ jobs:
           git apply build-config/.github/banner-saga-gl-tests.patch
           make -C dm/gfx/tests GAME=010014E00DB56000 t_gl_sampler_arrays
           dm/gfx/tests/t_gl_sampler_arrays
+      - name: Sampler array offscreen rendering
+        run: |
+          python3 dm/gfx/tools/gl_shaders.py build-config/dm/gfx/tests/fixtures/gl-sampler "$RUNNER_TEMP/sampler-cache"
+          dm/gfx/tests/t_gl_sampler_arrays --gpu "$RUNNER_TEMP/sampler-cache" build-config/dm/gfx/tests/fixtures/gl-sampler

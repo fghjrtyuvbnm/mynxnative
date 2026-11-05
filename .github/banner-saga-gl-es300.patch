@@ -1,8 +1,123 @@
+diff --git a/dm/gfx/gl/hle_gl.m b/dm/gfx/gl/hle_gl.m
+index f3e38a12..6db0c0e6 100644
+--- a/dm/gfx/gl/hle_gl.m
++++ b/dm/gfx/gl/hle_gl.m
+@@ -154,7 +154,7 @@ static int is_samp(int t) { return t >= T_SAMP2D && t < T_OTHER; }
+ static int is_intt(int t) { return t >= T_INT && t <= T_BOOL; }
+ typedef struct { char name[48]; uint8_t slot, type; } shattr;                         // a vertex input
+ typedef struct { char name[48]; uint16_t off, count, stride; uint8_t type; } shuni;   // a default block member (count 0 = not an array)
+-typedef struct { char name[48]; uint8_t slot, type; } shsamp;                         // a combined sampler: texture and sampler slot
++typedef struct { char name[48]; uint8_t slot, type, count; } shsamp;                  // first texture/sampler slot; count 0 = scalar
+ typedef struct { char key[17]; int frag, ub_slot, ub_size, na, nu, nt; shattr *a; shuni *u; shsamp *t; } shinfo;
+ static shinfo *g_sh; static int g_nsh;
+ static int sh_cmp(const void *a, const void *b) { int c = memcmp(((const shinfo *)a)->key, ((const shinfo *)b)->key, 16); return c ? c : ((const shinfo *)a)->frag - ((const shinfo *)b)->frag; }
+@@ -180,7 +180,12 @@ static void sh_load(void) {
+             if (t[0] == 'a' && sscanf(t, "a:%63[^=]=%u:%31s", nm, &a1, ty) == 3 && a1 < 16) { shattr *x = &s->a[s->na++]; strlcpy(x->name, nm, sizeof x->name); x->slot = a1; x->type = tcode(ty); }
+             else if (t[0] == 'u' && sscanf(t, "u:%63[^=]=%u:%31[^:]:%u:%u", nm, &a1, ty, &a2, &a3) == 5) {
+                 shuni *x = &s->u[s->nu++]; strlcpy(x->name, nm, sizeof x->name); x->off = a1; x->type = tcode(ty); x->count = a2; x->stride = a3;
+-            } else if (t[0] == 't' && sscanf(t, "t:%63[^=]=%u:%31s", nm, &a1, ty) == 3) { shsamp *x = &s->t[s->nt++]; strlcpy(x->name, nm, sizeof x->name); x->slot = a1; x->type = tcode(ty); }
++            } else if (t[0] == 't' && sscanf(t, "t:%63[^=]=%u:%31[^:]", nm, &a1, ty) == 3) {
++                unsigned count = 0; const char *suffix = strrchr(t, ':');
++                if (suffix && suffix[1] >= '0' && suffix[1] <= '9') count = (unsigned)strtoul(suffix + 1, NULL, 10);
++                if (a1 >= 16 || count > 16 || a1 + (count ? count : 1) > 16) { GLOG("[RED] invalid sampler range %s", t); continue; }
++                shsamp *x = &s->t[s->nt++]; strlcpy(x->name, nm, sizeof x->name); x->slot = a1; x->type = tcode(ty); x->count = count;
++            }
+             else if (t[0] == 'b' && sscanf(t, "b:%u:%u", &a1, &a2) == 2) { s->ub_slot = a1; s->ub_size = a2; }
+         }
+         if (s->ub_slot >= 15) GLOG("[RED] shader %s: uniform block at buffer slot %d meets the vertex buffer slots", s->key, s->ub_slot);
+@@ -319,7 +324,7 @@ NAMES(vao_t, g_vaos, g_nvaos, g_capvaos)
+ static vao_t g_vao0;   // the default vertex array (GL core has none, the compatibility profile does)
+ 
+ typedef struct { GLenum type; char *src; size_t len; char key[17]; const shinfo *si; __strong id<MTLFunction> fn; int compiled; } shader_t;
+-typedef struct { char name[48]; uint8_t type; uint16_t count; int32_t off[2]; uint16_t stride[2]; int slot[2]; int unit; } puni_t;   // [0] vertex, [1] fragment
++typedef struct { char name[48]; uint8_t type; uint16_t count; int32_t off[2]; uint16_t stride[2]; int slot[2]; int units[16]; } puni_t;   // [0] vertex, [1] fragment
+ typedef struct { uint32_t vf[16]; uint16_t stride[16]; uint8_t div[16]; uint32_t cpf, dpf, spf; uint8_t blend, mask, bsrc, bdst, bsa, bda, eqc, eqa; } pkey_t;
+ typedef struct { pkey_t k; void *pso; } pent_t;   // pso: a retained id<MTLRenderPipelineState>, NULL = failed
+ // amap: the game's attribute index of each Metal vertex input (glBindAttribLocation before the link, else the input's own number, which glGetAttribLocation returns);
+@@ -884,7 +889,8 @@ static void bind_uniforms_textures(prog_t *p) {
+     for (int i = 0; i < p->nu; i++) {
+         puni_t *u = &p->u[i];
+         if (!is_samp(u->type)) continue;
+-        int unit = u->unit < 0 || u->unit >= NUNITS ? 0 : u->unit;
++        for (int el = 0; el < (u->count ? u->count : 1); el++) {
++        int unit = u->units[el] < 0 || u->units[el] >= NUNITS ? 0 : u->units[el];
+         GLenum target = u->type == T_SAMPCUBE ? GL_TEXTURE_CUBE_MAP : u->type == T_SAMP3D ? GL_TEXTURE_3D : u->type == T_SAMP2DARR ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+         tex_t *t = tex_of(*unit_slot(unit, target));
+         id<MTLTexture> tx = nil; id<MTLSamplerState> sm = g_samp0;
+@@ -898,8 +904,9 @@ static void bind_uniforms_textures(prog_t *p) {
+                 GLOG("program %u sampler %s (unit %d) has no texture: drawing the 1x1 black placeholder", p->serial, u->name, unit); } }
+         for (int st = 0; st < 2; st++) {
+             if (u->slot[st] < 0) continue;
+-            if (st) { [e setFragmentTexture:tx atIndex:u->slot[st]]; [e setFragmentSamplerState:sm atIndex:u->slot[st]]; }
+-            else { [e setVertexTexture:tx atIndex:u->slot[st]]; [e setVertexSamplerState:sm atIndex:u->slot[st]]; }
++            if (st) { [e setFragmentTexture:tx atIndex:u->slot[st]+el]; [e setFragmentSamplerState:sm atIndex:u->slot[st]+el]; }
++            else { [e setVertexTexture:tx atIndex:u->slot[st]+el]; [e setVertexSamplerState:sm atIndex:u->slot[st]+el]; }
++        }
+         }
+     }
+     E.prog = p->serial;
+@@ -979,7 +986,7 @@ static int draw_setup(void) {
+           { static uint32_t dumped[32]; static int ndumped; int seen = 0; for (int k = 0; k < ndumped; k++) if (dumped[k] == p->serial) seen = 1;
+             if (!seen && ndumped < 32) { dumped[ndumped++] = p->serial;
+                 GLOG("program %u blocks: vertex slot %d size %u, fragment slot %d size %u; %d uniforms:", p->serial, p->si[0]->ub_slot, p->si[0]->ub_size, p->si[1]->ub_slot, p->si[1]->ub_size, p->nu);
+-                for (int k = 0; k < p->nu; k++) GLOG("   uniform %s type %u count %u unit %d (offset vertex %d fragment %d)", p->u[k].name, p->u[k].type, p->u[k].count, p->u[k].unit, p->u[k].off[0], p->u[k].off[1]); } }
++                for (int k = 0; k < p->nu; k++) GLOG("   uniform %s type %u count %u unit %d (offset vertex %d fragment %d)", p->u[k].name, p->u[k].type, p->u[k].count, p->u[k].units[0], p->u[k].off[0], p->u[k].off[1]); } }
+           // The textures the samplers point at: a full-screen composite of a 1280x720 surface must show that size in unit 0
+           { char line[512]; size_t o = 0;
+             for (int i = 0; i < 16; i++) { GLuint tn = S.units[i].t2d; tex_t *t = tex_of(tn); if (!t || !t->tex) continue;
+@@ -1749,7 +1756,7 @@ GLB(glLinkProgram, void, GLuint pr) {
+             for (int j = 0; j < p->nu; j++) if (!strcmp(p->u[j].name, nm)) u = &p->u[j];
+             if (!u) { u = &p->u[p->nu++]; strlcpy(u->name, nm, sizeof u->name); u->off[0] = u->off[1] = -1; u->slot[0] = u->slot[1] = -1; }
+             if (i < si->nu) { const shuni *m = &si->u[i]; u->type = m->type; u->count = m->count; u->off[st] = m->off; u->stride[st] = m->stride; }
+-            else { const shsamp *m = &si->t[i - si->nu]; u->type = m->type; u->slot[st] = m->slot; }
++            else { const shsamp *m = &si->t[i - si->nu]; u->type = m->type; u->slot[st] = m->slot; if (m->count > u->count) u->count = m->count; }
+         }
+     }
+     // the game's attribute indices: glBindAttribLocation's for the inputs it names, the input's own number for the others (or the lowest index no binding took)
+@@ -1826,7 +1833,14 @@ static void uni_write(GLint loc, GLsizei count, const void *v, int comps, int is
+     int i = loc / 4096, el = loc % 4096;
+     if (i >= p->nu) return;
+     puni_t *u = &p->u[i];
+-    if (is_samp(u->type)) { if (is_int) u->unit = *(const GLint *)v; return; }
++    if (is_samp(u->type)) {
++        int n = u->count ? u->count : 1;
++        if (is_int && comps == 1 && el < n) {
++            if (count > n - el) count = n - el;
++            memcpy(u->units + el, v, (size_t)count * sizeof(GLint));
++        }
++        return;
++    }
+     int n = u->count ? u->count : 1, rows = cols ? comps / cols : comps, size = cols ? cols * 16 : 16;
+     if (el + count > n) count = n - el;
+     for (int st = 0; st < 2; st++) {
+@@ -1884,7 +1898,7 @@ static void uni_read(GLuint pr, GLint loc, void *out, int as_int) {
+     prog_t *p = prog_of(pr);
+     if (!p || !p->linked || loc < 0 || loc / 4096 >= p->nu) return;
+     const puni_t *u = &p->u[loc / 4096]; int el = loc % 4096;
+-    if (is_samp(u->type)) { if (as_int) *(GLint *)out = u->unit; else *(GLfloat *)out = (GLfloat)u->unit; return; }
++    if (is_samp(u->type)) { if (el >= (u->count ? u->count : 1)) return; if (as_int) *(GLint *)out = u->units[el]; else *(GLfloat *)out = (GLfloat)u->units[el]; return; }
+     int st = u->off[0] >= 0 ? 0 : 1; if (u->off[st] < 0) return;
+     int cols = u->type == T_MAT4 ? 4 : u->type == T_MAT3 ? 3 : u->type == T_MAT2 ? 2 : 0, rows = cols ? cols : tcomps(u->type);
+     const uint8_t *d = p->ub[st] + u->off[st] + (size_t)el * (u->stride[st] ? u->stride[st] : cols ? cols * 16 : 16);
+@@ -2067,3 +2081,4 @@ EGL(eglGetProcAddress, void *, const char *name) {
+     pthread_mutex_unlock(&mu);
+     return fn;
+ }
++
 diff --git a/dm/gfx/tools/gl_shaders.py b/dm/gfx/tools/gl_shaders.py
-index 0a87351d..2f89404d 100644
+index 0a87351d..bf92023a 100644
 --- a/dm/gfx/tools/gl_shaders.py
 +++ b/dm/gfx/tools/gl_shaders.py
-@@ -141,6 +141,9 @@ def translate(src, stage, key, tmp):
+@@ -18,7 +18,7 @@
+ #   a:<name>=<slot>:<type>                       a vertex input, [[attribute(slot)]]
+ #   u:<name>=<offset>:<type>:<count>:<stride>    a member of the default uniform block (count 0 = not an array)
+ #   b:<slot>:<size>                              the default uniform block: its buffer slot and size in bytes
+-#   t:<name>=<slot>:<type>                       a combined sampler: texture and sampler slot
++#   t:<name>=<slot>:<type>[:<count>]             a combined sampler: first texture/sampler slot; optional array length
+ #   o:<name>=<location>                          a fragment output, [[color(location)]]
+ # <TAB> where it came from
+ # Usage: gl_shaders.py <input path>... <out dir> [--ios <dir>]   (input paths: the RomFS, the main NSO, capture folders)
+@@ -141,11 +141,29 @@ def translate(src, stage, key, tmp):
      r = subprocess.run(['glslangValidator', '-E', '-S', stage, g + '.in'], capture_output=True, text=True)
      if r.returncode: return 'glslang -E: ' + ' | '.join(l for l in (r.stdout + r.stderr).splitlines() if 'ERROR' in l and 'compilation' not in l)[:400]
      pre = r.stdout[r.stdout.find('#version'):]   # warnings come first
@@ -12,3 +127,36 @@ index 0a87351d..2f89404d 100644
      open(g, 'w').write(fixups(pre))
      r = subprocess.run(['glslangValidator', '-V', '-R', '--aml', '--amb', '-S', stage, g, '-o', spv], capture_output=True, text=True)
      if r.returncode: return 'glslang: ' + ' | '.join(l for l in (r.stdout + r.stderr).splitlines() if 'ERROR' in l and 'compilation' not in l)[:400]
+     refl = json.loads(subprocess.run([SPIRV_CROSS, spv, '--reflect'], capture_output=True, text=True, check=True).stdout)
+     cmd = [SPIRV_CROSS, spv, '--msl', '--msl-version', '20300', '--msl-decoration-binding', '--rename-entry-point', 'main', f'gl_{key}_{stage[0]}', stage, '--output', msl]
++    textures = refl.get('textures', [])
++    slots = {}
++    if any(t.get('array') for t in textures):
++        # A descriptor array occupies one Vulkan binding but N consecutive Metal
++        # texture/sampler slots. Reserve the whole range before the next resource.
++        slot = 0
++        for t in sorted(textures, key=lambda t: (t.get('set', 0), t['binding'])):
++            arr = t.get('array', [])
++            if len(arr) > 1 or (arr and (not all(t.get('array_size_is_literal', [True])) or not 1 <= arr[0] <= 16)):
++                return f'sampler {t["name"]}: unsupported array dimensions'
++            count = arr[0] if arr else 1
++            if slot + count > 16: return 'texture/sampler slots exceed 16'
++            slots[t['name']] = slot
++            cmd += ['--msl-resource-binding', str(t.get('set', 0)), str(t['binding']), str(t['binding']), str(slot), str(slot)]
++            slot += count
+     if stage == 'vert': cmd.append('--fixup-clipspace')
+     r = subprocess.run(cmd, capture_output=True, text=True)
+     if r.returncode: return 'spirv-cross: ' + r.stderr.strip()[:300]
+@@ -167,9 +185,9 @@ def translate(src, stage, key, tmp):
+         f.append(f'b:{u["binding"]}:{u["block_size"]}')
+         e = uni_members(refl, t['members'], '', 0, f, bools)
+         if e: return e
+-    for t in refl.get('textures', []):
+-        if t.get('array'): return f'sampler array {t["name"]}'
+-        f.append(f't:{t["name"]}={t["binding"]}:{t["type"]}')
++    for t in textures:
++        count = f':{t["array"][0]}' if t.get('array') else ''
++        f.append(f't:{t["name"]}={slots.get(t["name"], t["binding"])}:{t["type"]}{count}')
+     for k in ('separate_images', 'separate_samplers', 'images', 'ssbos', 'push_constants'):
+         if refl.get(k): return f'{k} are not implemented'
+     if any(int(x) > 15 for x in re.findall(r'\[\[(?:sampler|buffer)\((\d+)\)\]\]', m)): return 'a buffer or sampler slot above 15'
