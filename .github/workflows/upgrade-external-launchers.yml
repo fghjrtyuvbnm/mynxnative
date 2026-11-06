@@ -50,6 +50,13 @@ jobs:
         run: |
           brew install xcodegen
           python -m pip install lz4 fonttools cryptography
+      - name: Install iOS Metal compiler
+        if: matrix.game == 'botw'
+        run: |
+          if ! xcrun -sdk iphoneos metal --version; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -sdk iphoneos metal --version
       - name: Restore authenticated build inputs
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
@@ -76,6 +83,13 @@ jobs:
       - name: Compile launcher with existing shader identity
         run: |
           python -u build-config/scripts/resonance_cache/upgrade_launcher.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/input0.tar" "$RUNNER_TEMP/input1.tar" "$RUNNER_TEMP/game" "$RUNNER_TEMP/launcher.ipa"
+      - name: Verify compiled iOS host libraries
+        if: matrix.game == 'botw'
+        run: |
+          header=dm/host/gen/msl-iphoneos/host_msl_gen.h
+          for library in deswz present; do
+            grep -Eq "k_host_msl_lib_${library}, [1-9][0-9]*}" "$header"
+          done
       - name: Encrypt updated IPA
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
