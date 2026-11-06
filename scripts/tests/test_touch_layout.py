@@ -31,12 +31,12 @@ int main(void) {
     if (fits(1133, 720)) return fits(1133, 720);
     if (fits(600, 420)) return fits(600, 420) + 10;
     if (DM_TABLET_FACE_R * dm_tablet_pad_scale(1133, 720) * 2 < 44) return 20;
-    if (DM_TABLET_STICK_Y < 108 || DM_TABLET_MENU_Y < 204 || DM_TABLET_FACE_Y < 257 || DM_TABLET_SHOULDER_Y < 374) return 21;
+    if (DM_TABLET_STICK_Y < 122 || DM_TABLET_MENU_Y < 218 || DM_TABLET_FACE_Y < 271 || DM_TABLET_SHOULDER_Y < 388) return 21;
     if (!dm_tablet_stick_contains(DM_TABLET_STICK_X, DM_TABLET_STICK_Y)) return 22;
-    double x = 130, y = 148;  /* a touch away from the idle centre */
+    double x = 130, y = 160;  /* a touch away from the idle centre */
     if (!dm_tablet_stick_contains(x, y)) return 23;
     dm_tablet_stick_clamp(&x, &y);
-    if (x != 130 || y != 148) return 24;
+    if (x != 130 || y != 160) return 24;
     x = -100; y = 800;       /* the finger can drag past the region */
     if (dm_tablet_stick_contains(x, y)) return 25;
     dm_tablet_stick_clamp(&x, &y);
