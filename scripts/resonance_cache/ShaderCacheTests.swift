@@ -20,8 +20,26 @@ private struct TestAccess: GameDataAccess {
 
 @main enum CacheTests {
     static func main() throws {
+        if CommandLine.arguments.count == 3 {
+            try checkLargeFile(URL(fileURLWithPath: CommandLine.arguments[1]), expected: CommandLine.arguments[2])
+            return
+        }
         try scenario(image: false)
         try scenario(image: true)
+    }
+
+    private static func checkLargeFile(_ file: URL, expected: String) throws {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        let before = usage.ru_maxrss
+        try autoreleasepool {
+            let actual = try ShaderCache.digest(file: file)
+            guard actual == expected else { fatalError("Large file digest differs") }
+            getrusage(RUSAGE_SELF, &usage)
+            let growth = usage.ru_maxrss - before
+            print("Large file hash peak RSS growth: \(growth / (1024 * 1024)) MiB")
+            if growth > 160 * 1024 * 1024 { exit(23) }
+        }
     }
     static func scenario(image: Bool) throws {
         let fm = FileManager.default

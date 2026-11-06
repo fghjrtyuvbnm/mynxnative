@@ -20,6 +20,12 @@ jobs:
           dir=scripts/resonance_cache
           xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" "$dir/ShaderCacheTests.swift" -o "$RUNNER_TEMP/data-tests"
           "$RUNNER_TEMP/data-tests"
+      - name: Check large image hash memory use
+        run: |
+          image="$RUNNER_TEMP/large-image.img"
+          mkfile -n 1024m "$image"
+          expected=$(shasum -a 256 "$image" | cut -d ' ' -f 1)
+          "$RUNNER_TEMP/data-tests" "$image" "$expected"
       - name: Test actual launcher model with the default policy
         run: |
           python3 - <<'PY'
