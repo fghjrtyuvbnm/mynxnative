@@ -581,7 +581,7 @@ static BOOL pads_slotted(GCController *gone) {
     if (c && (!c.extendedGamepad || g_merge)) LOG("controller %s: %s%s", gone ? "disconnected" : "connected", pad_name(c), c.extendedGamepad ? "" : " (no extended gamepad profile: not used)");
     BOOL any = g_merge ? pads_merged(gone) : pads_slotted(gone);
     dispatch_async(dispatch_get_main_queue(), ^{
-        self->_padOff = any && !self->_tabletPad;
+        self->_padOff = any;
         self->_controls.hidden = self->_padOff;
         [self reset];
     });

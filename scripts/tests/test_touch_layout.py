@@ -3,6 +3,13 @@ from pathlib import Path
 import subprocess,tempfile,unittest
 REPO=Path(__file__).resolve().parents[2]
 class TouchLayout(unittest.TestCase):
+    def test_physical_controller_hides_tablet_controls(self):
+        source = (REPO / 'dm/ios/Sources/DmGamepad.m').read_text(encoding='utf-8')
+        update = source.split('- (void)padsChanged:(NSNotification *)note {', 1)[1].split('@end', 1)[0]
+        self.assertIn('self->_padOff = any;', update)
+        self.assertIn('self->_controls.hidden = self->_padOff;', update)
+        self.assertIn('[self reset];', update)
+
     def test_tablet_controls_fit_mini_and_smaller_windows(self):
         source = '''#if __has_include("TabletPadLayout.h")
 #include "TabletPadLayout.h"
