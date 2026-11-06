@@ -141,7 +141,7 @@ static void pads_start(void);   // Physical controllers, below
 @implementation DmGamepad {
     NSMapTable<UITouch *, NSNumber *> *_owner;     // touch → control (with the key for C_BTN or the stick for C_STICK, << 8)
     UITouch *_stick[2]; CGPoint _stickNow[2];      // the touch holding each stick and where it is now (0 left, 1 right)
-    CGPoint _rCentre;                              // the right stick's centre: where its touch landed, dragged along past K_RSTICK_R
+    CGPoint _floatingCentre[2];                    // where each floating stick landed, dragged along past its radius
     uint64_t _faceBits, _dpadBits, _btnBits;
     NSMapTable<UITouch *, NSNumber *> *_faceOf;    // which keys each touch on the diamond currently holds
     CAShapeLayer *_key[B_N]; CATextLayer *_label[B_N];   // one layer per key
@@ -249,6 +249,11 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
     CGRect s = self.safe; CGFloat u = self.u;
     return side(s, right, x * u, CGRectGetMaxY(s) - y * u);
 }
+- (CGPoint)tabletLocal:(CGPoint)p right:(BOOL)right {
+    CGRect s = self.safe; CGFloat u = self.u;
+    CGFloat x = right ? CGRectGetMaxX(s) - p.x : p.x - CGRectGetMinX(s);
+    return CGPointMake(x / u, (CGRectGetMaxY(s) - p.y) / u);
+}
 - (CGPoint)faceCenter {
     if (_tabletPad) return [self tabletPoint:YES x:DM_TABLET_FACE_X y:DM_TABLET_FACE_Y];
     CGRect s = self.corner; CGFloat u = self.u; return side(s, 1, K_FACE_X * u, CGRectGetMaxY(s) - K_PAD_Y * u);
@@ -258,8 +263,8 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGPoint)facePos:(int)b { CGPoint c = self.faceCenter; CGFloat g = self.faceGap;
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
 - (CGPoint)stickCentre:(int)i {
-    if (_tabletPad) return [self tabletPoint:i != 0 x:DM_TABLET_STICK_X y:DM_TABLET_STICK_Y];
-    if (i) return _rCentre;
+    if (_tabletPad) return _stick[i] ? _floatingCentre[i] : [self tabletPoint:i != 0 x:DM_TABLET_STICK_X y:DM_TABLET_STICK_Y];
+    if (i) return _floatingCentre[i];
     CGRect s = self.corner;
     return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u);
 }
@@ -385,14 +390,19 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         CGFloat best = 1; int kind = C_NONE, idx = 0;
         CGFloat f = dist(p, self.faceCenter) / (self.faceGap + self.faceR * 1.6); if (f <= best) { best = f; kind = C_FACE; }
         if (_full) { CGFloat d = dist(p, self.dpadCenter) / (self.dpadR * K_DPAD_GRAB); if (d < best) { best = d; kind = C_DPAD; } }
-        if (!_stick[0]) { CGFloat s = dist(p, [self stickCentre:0]) / ([self stickR:0] * (_tabletPad ? DM_TABLET_STICK_GRAB : K_STICK_GRAB)); if (s < best) { best = s; kind = C_STICK; } }
-        if (_tabletPad && !_stick[1] && dist(p, [self stickCentre:1]) < best * [self stickR:1] * DM_TABLET_STICK_GRAB) {
-            kind = C_STICK; idx = 1;
+        if (_tabletPad && kind == C_NONE && self.u > 0) {
+            idx = p.x >= CGRectGetMidX(self.safe);
+            CGPoint local = [self tabletLocal:p right:idx != 0];
+            if (!_stick[idx] && dm_tablet_stick_contains(local.x, local.y)) kind = C_STICK;
         }
-        if (!_tabletPad && kind == C_NONE && _full && !_stick[1] && [self inRightArea:p]) { kind = C_STICK; idx = 1; _rCentre = p; }   // the right stick: centred where the touch lands
+        if (!_tabletPad && !_stick[0] && dist(p, [self stickCentre:0]) < best * [self stickR:0] * K_STICK_GRAB) kind = C_STICK;
+        if (!_tabletPad && kind == C_NONE && _full && !_stick[1] && [self inRightArea:p]) { kind = C_STICK; idx = 1; }
         if (kind == C_FACE) { [_owner setObject:@(C_FACE) forKey:t]; [_faceOf setObject:@([self faceAt:p]) forKey:t]; }
         else if (kind == C_DPAD) [_owner setObject:@(C_DPAD) forKey:t];
-        else if (kind == C_STICK) { [_owner setObject:@(C_STICK | (uint64_t)idx << 8) forKey:t]; _stick[idx] = t; _stickNow[idx] = p; }
+        else if (kind == C_STICK) {
+            [_owner setObject:@(C_STICK | (uint64_t)idx << 8) forKey:t];
+            _stick[idx] = t; _stickNow[idx] = _floatingCentre[idx] = p;
+        }
         else game |= [self gameBegin:t];
     }
     if (game) [self pushGame];
@@ -403,9 +413,24 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     for (UITouch *t in ts) {
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue; int c = (int)(v & 0xff); CGPoint p = [t locationInView:self];
         if (c == C_FACE) [_faceOf setObject:@([self faceAt:p]) forKey:t];
-        else if (c == C_STICK) { _stickNow[v >> 8] = p;
-            if (!_tabletPad && (v >> 8) == 1) { CGFloat d = dist(p, _rCentre), R = [self stickR:1];   // the right stick's centre follows a finger past its radius, so turning back responds at once
-                if (d > R) _rCentre = CGPointMake(p.x - (p.x - _rCentre.x) * R / d, p.y - (p.y - _rCentre.y) * R / d); } }
+        else if (c == C_STICK) {
+            int i = (int)(v >> 8);
+            _stickNow[i] = p;
+            if (i || _tabletPad) {
+                CGPoint centre = _floatingCentre[i];
+                CGFloat d = dist(p, centre), r = [self stickR:i];
+                if (d > r) {
+                    centre = CGPointMake(p.x - (p.x - centre.x) * r / d, p.y - (p.y - centre.y) * r / d);
+                    if (_tabletPad && self.u > 0) {
+                        CGPoint local = [self tabletLocal:centre right:i != 0];
+                        double x = local.x, y = local.y;
+                        dm_tablet_stick_clamp(&x, &y);
+                        centre = [self tabletPoint:i != 0 x:x y:y];
+                    }
+                    _floatingCentre[i] = centre;
+                }
+            }
+        }
         else if (c == C_GAME) game = YES;
     }
     if (game) [self pushGame];
@@ -479,12 +504,15 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     static const struct { int b; CGFloat angle; } arms[] = {{B_UP, 0}, {B_RIGHT, M_PI_2}, {B_DOWN, M_PI}, {B_LEFT, -M_PI_2}};   // the same arm in 90° steps
     for (int i = 0; i < 4; i++) setPath(_key[arms[i].b], armPath(self.dpadCenter, self.dpadR, K_ARM_W * u, K_ARM_IN * u, arms[i].angle, 6 * u));
     CGPoint sc = self.swapCenter; setPath(_swap, circlePath(sc, K_SWAP_R * u)); placeLabel(_swapLabel, sc, 12 * u);
-    setPath(_ring, circlePath([self stickCentre:0], [self stickR:0]));
+    if (!_tabletPad) setPath(_ring, circlePath([self stickCentre:0], [self stickR:0]));
     CGFloat k = (_tabletPad ? DM_TABLET_KNOB_R : K_KNOB_R) * u;
     _knob.bounds = CGRectMake(0, 0, 2 * k, 2 * k);
     setPath(_knob, circlePath(CGPointMake(k, k), k));
     if (_tabletPad) {
-        setPath(_rightRing, circlePath([self stickCentre:1], [self stickR:1]));
+        CGFloat r = [self stickR:0];
+        _ring.bounds = _rightRing.bounds = CGRectMake(0, 0, 2 * r, 2 * r);
+        setPath(_ring, circlePath(CGPointMake(r, r), r));
+        setPath(_rightRing, circlePath(CGPointMake(r, r), r));
         _rightKnob.bounds = _knob.bounds;
         setPath(_rightKnob, circlePath(CGPointMake(k, k), k));
     }
@@ -504,6 +532,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;
     if (_tabletPad) {
         CGPoint home = [self stickCentre:1], offset = [self knobOffset:1];
+        _ring.position = h; _rightRing.position = home;
         _rightKnob.position = CGPointMake(home.x + offset.x, home.y + offset.y);
         _rightKnob.fillColor = (_stick[1] ? k_on : k_idle).CGColor;
     }

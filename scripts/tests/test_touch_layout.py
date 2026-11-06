@@ -17,13 +17,12 @@ class TouchLayout(unittest.TestCase):
 
 static int fits(double width, double height) {
     double scale = dm_tablet_pad_scale(width, height);
-    double stickGrab = DM_TABLET_STICK_R * DM_TABLET_STICK_GRAB;
     double faceGrab = DM_TABLET_FACE_GAP + DM_TABLET_FACE_R * 1.6;
-    if (DM_TABLET_STICK_X <= stickGrab || DM_TABLET_STICK_Y <= stickGrab) return 1;
-    if (hypot(DM_TABLET_FACE_X-DM_TABLET_STICK_X, DM_TABLET_FACE_Y-DM_TABLET_STICK_Y) <= faceGrab+stickGrab) return 2;
+    if (DM_TABLET_STICK_MIN_X < DM_TABLET_STICK_R || DM_TABLET_STICK_MIN_Y < DM_TABLET_STICK_R) return 1;
+    if (DM_TABLET_FACE_Y - DM_TABLET_STICK_MAX_Y <= faceGrab) return 2;
     if (DM_TABLET_SHOULDER_Y * scale >= height * 0.6) return 3;
     if ((DM_TABLET_MENU_X + DM_TABLET_MENU_W / 2 + 8) * scale >= width / 2) return 4;
-    if (DM_TABLET_CLICK_X-DM_TABLET_STICK_X <= stickGrab + DM_TABLET_CLICK_R * 1.35) return 5;
+    if (DM_TABLET_CLICK_X - DM_TABLET_STICK_MAX_X <= DM_TABLET_CLICK_R * 1.35) return 5;
     if (DM_TABLET_SHOULDER_IN_X-DM_TABLET_SHOULDER_OUT_X <= DM_TABLET_SHOULDER_R * 2.7) return 6;
     return 0;
 }
@@ -32,6 +31,16 @@ int main(void) {
     if (fits(1133, 720)) return fits(1133, 720);
     if (fits(600, 420)) return fits(600, 420) + 10;
     if (DM_TABLET_FACE_R * dm_tablet_pad_scale(1133, 720) * 2 < 44) return 20;
+    if (DM_TABLET_STICK_Y < 108 || DM_TABLET_MENU_Y < 204 || DM_TABLET_FACE_Y < 257 || DM_TABLET_SHOULDER_Y < 374) return 21;
+    if (!dm_tablet_stick_contains(DM_TABLET_STICK_X, DM_TABLET_STICK_Y)) return 22;
+    double x = 130, y = 148;  /* a touch away from the idle centre */
+    if (!dm_tablet_stick_contains(x, y)) return 23;
+    dm_tablet_stick_clamp(&x, &y);
+    if (x != 130 || y != 148) return 24;
+    x = -100; y = 800;       /* the finger can drag past the region */
+    if (dm_tablet_stick_contains(x, y)) return 25;
+    dm_tablet_stick_clamp(&x, &y);
+    if (x != DM_TABLET_STICK_MIN_X || y != DM_TABLET_STICK_MAX_Y) return 26;
     return 0;
 }
 #else
