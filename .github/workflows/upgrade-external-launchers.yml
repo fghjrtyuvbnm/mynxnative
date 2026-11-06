@@ -1,6 +1,12 @@
 name: Update external data launchers
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Launcher group to rebuild
+        type: choice
+        options: [existing, botw]
+        default: existing
 permissions:
   contents: read
 jobs:
@@ -9,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        game: [unicorn, octopath-ii, three-houses]
+        game: ${{ fromJSON(inputs.target == 'botw' && '["botw"]' || '["unicorn", "octopath-ii", "three-houses"]') }}
     runs-on: xcode-27
     timeout-minutes: 35
     env:
@@ -30,6 +36,13 @@ jobs:
           dir=build-config/scripts/resonance_cache
           xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" "$dir/ShaderCacheTests.swift" -o "$RUNNER_TEMP/data-tests"
           "$RUNNER_TEMP/data-tests"
+      - name: Check large image hash memory use
+        if: matrix.game == 'botw'
+        run: |
+          image="$RUNNER_TEMP/large-image.img"
+          mkfile -n 1024m "$image"
+          expected=$(shasum -a 256 "$image" | cut -d ' ' -f 1)
+          "$RUNNER_TEMP/data-tests" "$image" "$expected"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'

@@ -14,7 +14,8 @@ SOURCE = 'cde88f62068e3d879b083b1a86a7fd78610c7b7b'
 APP = 'Payload/DmIOS.app/'
 VERSIONS = {'010054B01AD92000': ('v262144', 'merged', 'Unicorn Overlord'),
             '0100A3501946E000': ('v131072', 'v131072', 'OCTOPATH TRAVELER II'),
-            '010055D009F78000': ('v327680', 'v327680', 'Fire Emblem Three Houses')}
+            '010055D009F78000': ('v327680', 'v327680', 'Fire Emblem Three Houses'),
+            '01007EF00011E000': ('v786432', 'v786432', 'Zelda Breath of the Wild')}
 
 
 def main(repo, archive, overlay, work, output):
@@ -33,7 +34,8 @@ def main(repo, archive, overlay, work, output):
     if f'# BUILD_ID\t{identity["main_build"]}\n' not in (patch / 'main.fixups.tsv').read_text():
         raise ValueError('Rewritten main differs from the installed data build')
     extract = work / 'extract' / extraction
-    profile = repo / 'dm/games' / title
+    derived = work / 'profile' / title
+    profile = derived if (derived / 'game.tsv').is_file() else repo / 'dm/games' / title
     for name in ('c1_full.tsv', 'cb_extent.tsv'):
         (profile / name).write_bytes((metadata / name).read_bytes())
     apply(repo, source=SOURCE)
@@ -45,6 +47,8 @@ def main(repo, archive, overlay, work, output):
                DM_APP_VERSION=old['CFBundleShortVersionString'], DM_LANG=old['DMLanguage'],
                DM_PSO_GPUS='none', DM_ENTITLEMENTS='', DM_ICON=str(extract/'icon.jpg'), AOC='',
                DM_COPY_ROMFS='NO', DM_XCODE_DERIVED_DATA=str(dd))
+    if profile == derived:
+        env.update(DM_GAMES_DIR=str(derived.parent), DM_GAMES_FIRST='1')
     if f'"{chain}"' not in (repo/'dm/gfx/nvn/dmsh_chain.h').read_text():
         raise ValueError('Shader chain differs from the installed data')
     run('bash', repo/'dm/ios/tools/build_ipa.sh', '--prepare-xcode', env=env)
