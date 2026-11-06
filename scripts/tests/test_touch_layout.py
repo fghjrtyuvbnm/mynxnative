@@ -20,7 +20,8 @@ static int fits(double width, double height) {
     double faceGrab = DM_TABLET_FACE_GAP + DM_TABLET_FACE_R * 1.6;
     if (DM_TABLET_STICK_MIN_X < DM_TABLET_STICK_R || DM_TABLET_STICK_MIN_Y < DM_TABLET_STICK_R) return 1;
     if (DM_TABLET_FACE_Y - DM_TABLET_STICK_MAX_Y <= faceGrab) return 2;
-    if (DM_TABLET_SHOULDER_Y * scale >= height * 0.6) return 3;
+    if (DM_TABLET_SHOULDER_Y * scale >= height * 0.625 ||
+        (DM_TABLET_SHOULDER_Y + DM_TABLET_SHOULDER_R * 1.35) * scale >= height) return 3;
     if ((DM_TABLET_MENU_X + DM_TABLET_MENU_W / 2 + 8) * scale >= width / 2) return 4;
     if (DM_TABLET_CLICK_X - DM_TABLET_STICK_MAX_X <= DM_TABLET_CLICK_R * 1.35) return 5;
     if (DM_TABLET_SHOULDER_IN_X-DM_TABLET_SHOULDER_OUT_X <= DM_TABLET_SHOULDER_R * 2.7) return 6;
@@ -31,7 +32,7 @@ int main(void) {
     if (fits(1133, 720)) return fits(1133, 720);
     if (fits(600, 420)) return fits(600, 420) + 10;
     if (DM_TABLET_FACE_R * dm_tablet_pad_scale(1133, 720) * 2 < 44) return 20;
-    if (DM_TABLET_STICK_Y < 122 || DM_TABLET_MENU_Y < 218 || DM_TABLET_FACE_Y < 271 || DM_TABLET_SHOULDER_Y < 388) return 21;
+    if (DM_TABLET_STICK_Y < 134 || DM_TABLET_MENU_Y < 230 || DM_TABLET_FACE_Y < 283 || DM_TABLET_SHOULDER_Y < 400) return 21;
     if (!dm_tablet_stick_contains(DM_TABLET_STICK_X, DM_TABLET_STICK_Y)) return 22;
     double x = 130, y = 160;  /* a touch away from the idle centre */
     if (!dm_tablet_stick_contains(x, y)) return 23;
