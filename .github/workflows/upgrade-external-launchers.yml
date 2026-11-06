@@ -5,7 +5,7 @@ on:
       target:
         description: Launcher group to rebuild
         type: choice
-        options: [existing, botw]
+        options: [existing, botw, botw-tablet]
         default: existing
 permissions:
   contents: read
@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        game: ${{ fromJSON(inputs.target == 'botw' && '["botw"]' || '["unicorn", "octopath-ii", "three-houses"]') }}
+        game: ${{ fromJSON(startsWith(inputs.target, 'botw') && '["botw"]' || '["unicorn", "octopath-ii", "three-houses"]') }}
     runs-on: xcode-27
     timeout-minutes: 35
     env:
@@ -46,6 +46,10 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'
+      - name: Check tablet touch geometry
+        if: inputs.target == 'botw-tablet'
+        working-directory: build-config
+        run: python -m unittest scripts.tests.test_touch_layout
       - name: Install build tools
         run: |
           brew install xcodegen
@@ -81,6 +85,8 @@ jobs:
               transform(encrypted, temp / f'input{index}.tar', key, True)
           PY
       - name: Compile launcher with existing shader identity
+        env:
+          BOTW_TABLET_PAD: ${{ inputs.target == 'botw-tablet' && '1' || '0' }}
         run: |
           python -u build-config/scripts/resonance_cache/upgrade_launcher.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/input0.tar" "$RUNNER_TEMP/input1.tar" "$RUNNER_TEMP/game" "$RUNNER_TEMP/launcher.ipa"
       - name: Verify compiled iOS host libraries

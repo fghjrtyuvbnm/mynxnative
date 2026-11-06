@@ -39,6 +39,11 @@ def main(repo, archive, overlay, work, output):
     for name in ('c1_full.tsv', 'cb_extent.tsv'):
         (profile / name).write_bytes((metadata / name).read_bytes())
     apply(repo, source=SOURCE)
+    tablet_pad = title == '01007EF00011E000' and os.environ.get('BOTW_TABLET_PAD') == '1'
+    if tablet_pad:
+        overlay_sources = Path(__file__).resolve().parents[2] / 'dm/ios/Sources'
+        for name in ('DmGamepad.m', 'TouchLayoutPolicy.h', 'TabletPadLayout.h'):
+            (repo / 'dm/ios/Sources' / name).write_bytes((overlay_sources / name).read_bytes())
     dd = work / 'xcode-dd'
     env = dict(os.environ, GAME=title, DM_GAME=title, DM_ROOT=str(work), WORK=str(work/'tmp'),
                W=str(work/'ipa'), PATCHED=str(patch), ROMFS=str(extract/'RomFS'),
@@ -59,6 +64,8 @@ def main(repo, archive, overlay, work, output):
                 'DMExternalRomFSMarker', 'DMShaderCacheManifest'):
         info[key] = old[key]
     info['DMLocalDataManagement'] = True
+    if tablet_pad:
+        info['DMTabletPad'] = True
     plist.write_bytes(plistlib.dumps(info))
     run('xcodebuild', '-project', project/'DmIOS.xcodeproj', '-scheme', f'{display} ({title})',
         '-configuration', 'Release', '-destination', 'generic/platform=iOS', '-derivedDataPath', dd,
