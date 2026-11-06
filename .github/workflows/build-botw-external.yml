@@ -1,6 +1,11 @@
 name: Build ZeldaBreathOfTheWild external-data IPA
 on:
   workflow_dispatch:
+    inputs:
+      input_digest:
+        description: SHA-256 of the encrypted 1.9.0 input (empty uses the original 1.6.0 input)
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -33,6 +38,10 @@ jobs:
           dir=build-config/scripts/resonance_cache
           xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" "$dir/ShaderCacheTests.swift" -o "$RUNNER_TEMP/shader-cache-tests"
           "$RUNNER_TEMP/shader-cache-tests"
+      - name: Test iPad touch layout
+        if: inputs.input_digest != ''
+        working-directory: build-config
+        run: python -m unittest scripts.tests.test_touch_layout
       - name: Install build tools
         run: |
           set -euo pipefail
@@ -44,19 +53,30 @@ jobs:
       - name: Restore authenticated linking inputs
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+          INPUT_DIGEST: ${{ inputs.input_digest }}
         run: |
           set -euo pipefail
           python - <<'PY'
-          import os, sys
+          import hashlib, os, re, sys
           from pathlib import Path
           sys.path.insert(0,'build-config/scripts')
           from ipa_crypto import transform
           temp=Path(os.environ['RUNNER_TEMP'])
           path=temp/'launcher-input.enc'
-          parts=sorted(Path('build-config/build-input-botw').rglob('part-*'))
-          assert parts, 'Missing encrypted linking inputs'
-          with path.open('wb') as stream:
-              for part in parts: stream.write(part.read_bytes())
+          digest=os.environ['INPUT_DIGEST']
+          if digest:
+              assert re.fullmatch('[0-9a-f]{64}', digest)
+              parts=sorted(Path('build-config/build-input-botw-190').rglob('part-*'))
+              assert parts, 'Missing encrypted 1.9.0 linking inputs'
+              with path.open('wb') as stream:
+                  for part in parts: stream.write(part.read_bytes())
+              with path.open('rb') as stream:
+                  assert hashlib.file_digest(stream,'sha256').hexdigest()==digest, 'Encrypted input digest mismatch'
+          else:
+              parts=sorted(Path('build-config/build-input-botw').rglob('part-*'))
+              assert parts, 'Missing encrypted linking inputs'
+              with path.open('wb') as stream:
+                  for part in parts: stream.write(part.read_bytes())
           transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
           PY
       - name: Compile external launcher
