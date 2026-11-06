@@ -212,10 +212,14 @@ struct LocalGameData {
             }
             let destination = stage.appendingPathComponent(record.path)
             try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let large = record.size >= 128 * 1024 * 1024
+            if large { fputs("external data import: copying \(record.path) (\(record.size) bytes)\n", stderr) }
             try fm.copyItem(at: source, to: destination)
+            if large { fputs("external data import: verifying \(record.path)\n", stderr) }
             guard try ShaderCache.digest(file: destination) == record.sha256 else {
                 throw GameDataError.cacheIntegrity(record.path)
             }
+            if large { fputs("external data import: verified \(record.path)\n", stderr) }
             progress?(index + 1, rows.count)
         }
         try manifest.write(to: stage.appendingPathComponent("game-data.json"))

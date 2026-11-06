@@ -15,8 +15,15 @@ struct ShaderCache {
         let stream = try FileHandle(forReadingFrom: file)
         defer { try? stream.close() }
         var hash = SHA256()
-        while let block = try stream.read(upToCount: 1024 * 1024), !block.isEmpty {
-            hash.update(data: block)
+        // The import queue can hold one autorelease pool for the whole image.
+        // Drain Foundation's temporary objects after each block.
+        while true {
+            let hasData = try autoreleasepool {
+                guard let block = try stream.read(upToCount: 1024 * 1024), !block.isEmpty else { return false }
+                hash.update(data: block)
+                return true
+            }
+            if !hasData { break }
         }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }

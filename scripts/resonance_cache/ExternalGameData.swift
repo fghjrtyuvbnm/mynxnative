@@ -128,6 +128,7 @@ final class ExternalGameDataStore: ObservableObject {
               let access = session.access as? ScopedGameDataAccess else { return }
         busy = true
         message = "Importing game data..."
+        fputs("external data import: started\n", stderr)
         queue.async {
             do {
                 guard let layout = session.current else { throw GameDataError.noSelection }
@@ -143,8 +144,10 @@ final class ExternalGameDataStore: ObservableObject {
                     }
                 }
                 let installed = try session.useLocal(local.root)
+                fputs("external data import: ready for offline play\n", stderr)
                 DispatchQueue.main.async { self.showReady(installed) }
             } catch {
+                fputs("external data import: \(error.localizedDescription)\n", stderr)
                 DispatchQueue.main.async { self.message = error.localizedDescription; self.busy = false }
             }
         }
