@@ -73,6 +73,13 @@ def main(repo, archive, work, output):
         raise ValueError('Unexpected virtual-address-memory requirement')
     if not map_rows(profile/'shader_map.tsv'):
         raise ValueError('No prepared shaders')
+    if comparison:
+        # The registered conflict rows refer to package indices in this map.
+        registered = repo/'dm/games'/TITLE
+        if map_rows(profile/'shader_map.tsv') != map_rows(registered/'shader_map.tsv'):
+            raise ValueError('Scanned map does not match registered conflict rows')
+        name = 'shader_map.tsv.conflicts.tsv'
+        shutil.copyfile(registered/name, profile/name)
     translator = repo/'dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate'
     ios = build.build_shaders(Path(sys.executable), repo, work/'shader', translator, env, logs, g)
     chain = build.chain_of(repo)
