@@ -5,7 +5,7 @@ on:
       target:
         description: Launcher group to rebuild
         type: choice
-        options: [existing, botw, botw-tablet]
+        options: [existing, botw, botw-tablet, botw-190]
         default: existing
 permissions:
   contents: read
@@ -47,9 +47,15 @@ jobs:
         with:
           python-version: '3.14'
       - name: Check tablet touch geometry
-        if: inputs.target == 'botw-tablet'
+        if: inputs.target == 'botw-tablet' || inputs.target == 'botw-190'
         working-directory: build-config
         run: python -m unittest scripts.tests.test_touch_layout
+      - name: Test physical controller mapping
+        if: inputs.target == 'botw-190'
+        working-directory: build-config
+        run: |
+          xcrun clang -std=c11 -Wall -Werror dm/host/tests/t_pad_face.c -o "$RUNNER_TEMP/pad-face"
+          "$RUNNER_TEMP/pad-face"
       - name: Install build tools
         run: |
           brew install xcodegen
@@ -64,7 +70,7 @@ jobs:
       - name: Restore authenticated build inputs
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
-          GAME_INPUT: ${{ matrix.game }}
+          GAME_INPUT: ${{ inputs.target == 'botw-190' && 'botw-190' || matrix.game }}
         run: |
           python - <<'PY'
           from pathlib import Path

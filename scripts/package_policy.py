@@ -1,6 +1,8 @@
 """Shared launcher policy for locally finalized and future external packages."""
 import json
+from pathlib import Path
 import plistlib
+import shutil
 import zipfile
 
 DEVICE_GYRO = dict(env='DM_PHONE_MOTION', kind='toggle', section='Controls',
@@ -9,6 +11,8 @@ DEVICE_GYRO = dict(env='DM_PHONE_MOTION', kind='toggle', section='Controls',
     default='1', on='1', off='auto', level='basic')
 DEVICE_GYRO_TSV = '\t'.join(('DM_PHONE_MOTION','toggle','1/auto','1','platform:ios','Controls',
     DEVICE_GYRO['label'],DEVICE_GYRO['note'],'level=basic'))
+FACE_SWAP_TSV = '\t'.join(('DM_PAD_SWAP_FACE', 'toggle', '-', '0', 'platform:ios', 'Controls',
+    'Swap A/B and X/Y', 'Swap these buttons on physical controllers only.'))
 
 
 def install_launcher_policy(repo):
@@ -18,6 +22,22 @@ def install_launcher_policy(repo):
     if existing and existing != [DEVICE_GYRO_TSV]:
         raise ValueError('Review the existing device-motion setting before replacing it')
     if not existing: path.write_text(text.rstrip()+'\n'+DEVICE_GYRO_TSV+'\n',encoding='utf-8')
+
+
+def install_controller_policy(repo):
+    """Install the setting with the code that reads it in a pinned iOS build."""
+    adapter = Path('dm/host/pad_apple.h')
+    source = Path(__file__).resolve().parents[1] / adapter
+    target = repo / adapter
+    path = repo / 'dm/games/settings.tsv'
+    text = path.read_text(encoding='utf-8')
+    existing = [line for line in text.splitlines() if line.startswith('DM_PAD_SWAP_FACE\t')]
+    if existing and existing != [FACE_SWAP_TSV]:
+        raise ValueError('Review the existing face button setting before replacing it')
+    if source.resolve() != target.resolve():
+        shutil.copyfile(source, target)
+    if not existing:
+        path.write_text(text.rstrip() + '\n' + FACE_SWAP_TSV + '\n', encoding='utf-8')
 
 
 def patch_ipa(source,destination,manifest_digest):
