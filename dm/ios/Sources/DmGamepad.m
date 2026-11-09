@@ -271,13 +271,13 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGPoint)tabletPoint:(BOOL)right x:(CGFloat)x y:(CGFloat)y {
     CGRect s = self.safe;
     DmTabletMetrics m = [self tabletMetrics:s];
-    return side(s, right, x * m.scale, CGRectGetMaxY(s) - y * m.scale - m.lift);
+    return side(s, right, x * m.scale, CGRectGetMaxY(s) - dm_tablet_pad_y(m, y));
 }
 - (CGPoint)tabletLocal:(CGPoint)p right:(BOOL)right {
     CGRect s = self.safe;
     DmTabletMetrics m = [self tabletMetrics:s];
     CGFloat x = right ? CGRectGetMaxX(s) - p.x : p.x - CGRectGetMinX(s);
-    return CGPointMake(x / m.scale, (CGRectGetMaxY(s) - p.y - m.lift) / m.scale);
+    return CGPointMake(x / m.scale, (CGRectGetMaxY(s) - p.y - m.centre) / m.scale);
 }
 - (CGPoint)faceCenter {
     if (_tabletPad) return [self tabletPoint:YES x:DM_TABLET_FACE_X y:DM_TABLET_FACE_Y];
