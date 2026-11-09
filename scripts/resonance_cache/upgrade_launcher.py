@@ -17,13 +17,19 @@ APP = 'Payload/DmIOS.app/'
 VERSIONS = {'010054B01AD92000': ('v262144', 'merged', 'Unicorn Overlord'),
             '0100A3501946E000': ('v131072', 'v131072', 'OCTOPATH TRAVELER II'),
             '010055D009F78000': ('v327680', 'v327680', 'Fire Emblem Three Houses'),
+            '0100F3400332C000': ('v917504', 'v917504', 'Xenoblade Chronicles 2'),
             '01007EF00011E000': ('v786432', 'v786432', 'Zelda Breath of the Wild')}
 BOTW_TITLE = '01007EF00011E000'
+XENOBLADE_TITLE = '0100F3400332C000'
 FACE_SETTING = 'DM_PAD_SWAP_FACE'
 
 
 def verify_botw190_settings(old, new):
     verify_comparison_settings(new)
+    verify_swap_settings(old, new)
+
+
+def verify_swap_settings(old, new):
     toggle = [r for r in new['settings'] if r['env'] == FACE_SETTING]
     if (len(toggle) != 1 or
         any(toggle[0].get(k) != v for k, v in dict(kind='toggle', section='Controls', default='0', on='1', off='0').items())):
@@ -45,6 +51,11 @@ def main(repo, archive, overlay, work, output):
     title, chain = identity['title_id'], identity['shader_chain']
     version, extraction, display = VERSIONS[title]
     comparison = title == BOTW_TITLE and old['CFBundleShortVersionString'] == '1.9.0'
+    xenoblade = title == XENOBLADE_TITLE
+    if xenoblade and (old['CFBundleShortVersionString'] != '2.0.2' or
+                      old['CFBundleIdentifier'] != 'org.nxnative.0100f3400332c000' or
+                      identity['main_build'] != 'e3938fa78579c1cab27fb0ecef1314e8'):
+        raise ValueError('Unexpected Xenoblade Chronicles 2 launcher identity')
     if comparison:
         version = extraction = 'v1114112'
         display = old['CFBundleDisplayName']
@@ -66,7 +77,7 @@ def main(repo, archive, overlay, work, output):
     for name in ('c1_full.tsv', 'cb_extent.tsv'):
         (profile / name).write_bytes((metadata / name).read_bytes())
     apply(repo, source=SOURCE)
-    tablet_pad = comparison or (title == BOTW_TITLE and os.environ.get('BOTW_TABLET_PAD') == '1')
+    tablet_pad = comparison or xenoblade or (title == BOTW_TITLE and os.environ.get('BOTW_TABLET_PAD') == '1')
     if tablet_pad:
         overlay_sources = Path(__file__).resolve().parents[2] / 'dm/ios/Sources'
         for name in ('DmGamepad.m', 'TouchLayoutPolicy.h', 'TabletPadLayout.h'):
@@ -85,9 +96,10 @@ def main(repo, archive, overlay, work, output):
         raise ValueError('Shader chain differs from the installed data')
     run('bash', repo/'dm/ios/tools/build_ipa.sh', '--prepare-xcode', env=env)
     project = work/'ipa/xcode'
-    if comparison:
-        verify_botw190_settings(json.loads((metadata/'launcher.json').read_bytes()),
-                                json.loads((project/'Gen/dm/launcher.json').read_bytes()))
+    if comparison or xenoblade:
+        validate = verify_botw190_settings if comparison else verify_swap_settings
+        validate(json.loads((metadata/'launcher.json').read_bytes()),
+                 json.loads((project/'Gen/dm/launcher.json').read_bytes()))
     plist = project/'Gen/Info.plist'
     info = plistlib.loads(plist.read_bytes())
     for key in ('DMExternalGameData', 'DMExternalDataVersion', 'DMExternalDataIdentity',
@@ -96,7 +108,7 @@ def main(repo, archive, overlay, work, output):
     info['DMLocalDataManagement'] = True
     if tablet_pad:
         info['DMTabletPad'] = True
-    if comparison:
+    if comparison or xenoblade:
         for key in ('LSSupportsOpeningDocumentsInPlace', 'UIFileSharingEnabled'):
             info[key] = old[key]
     plist.write_bytes(plistlib.dumps(info))
@@ -108,7 +120,7 @@ def main(repo, archive, overlay, work, output):
     skip = [item for name in ('_CodeSignature','embedded.mobileprovision','romfs','romfs.img','msl','aoc')
             for item in ('--skip', APP+name)]
     built_app = dd/'Build/Products/Release-iphoneos/DmIOS.app'
-    if comparison:
+    if comparison or xenoblade:
         for name in ('shader_pairs.tsv', 'pso_pairs.tsv'):
             table = built_app/'dm'/name
             payload = table.read_bytes().replace(b'\r\n', b'\n')

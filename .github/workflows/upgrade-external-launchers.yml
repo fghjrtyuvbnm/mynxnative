@@ -5,7 +5,7 @@ on:
       target:
         description: Launcher group to rebuild
         type: choice
-        options: [existing, botw, botw-tablet, botw-190]
+        options: [existing, botw, botw-tablet, botw-190, xenoblade2]
         default: existing
 permissions:
   contents: read
@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        game: ${{ fromJSON(startsWith(inputs.target, 'botw') && '["botw"]' || '["unicorn", "octopath-ii", "three-houses"]') }}
+        game: ${{ fromJSON(startsWith(inputs.target, 'botw') && '["botw"]' || inputs.target == 'xenoblade2' && '["xenoblade2"]' || '["unicorn", "octopath-ii", "three-houses"]') }}
     runs-on: xcode-27
     timeout-minutes: 35
     env:
@@ -47,11 +47,11 @@ jobs:
         with:
           python-version: '3.14'
       - name: Check tablet touch geometry
-        if: inputs.target == 'botw-tablet' || inputs.target == 'botw-190'
+        if: inputs.target == 'botw-tablet' || inputs.target == 'botw-190' || matrix.game == 'xenoblade2'
         working-directory: build-config
         run: python -m unittest scripts.tests.test_touch_layout
       - name: Test physical controller mapping
-        if: inputs.target == 'botw-190'
+        if: inputs.target == 'botw-190' || matrix.game == 'xenoblade2'
         working-directory: build-config
         run: |
           xcrun clang -std=c11 -Wall -Werror dm/host/tests/t_pad_face.c -o "$RUNNER_TEMP/pad-face"
@@ -61,7 +61,7 @@ jobs:
           brew install xcodegen
           python -m pip install lz4 fonttools cryptography
       - name: Install iOS Metal compiler
-        if: matrix.game == 'botw'
+        if: matrix.game == 'botw' || matrix.game == 'xenoblade2'
         run: |
           if ! xcrun -sdk iphoneos metal --version; then
             xcodebuild -downloadComponent MetalToolchain
@@ -96,7 +96,7 @@ jobs:
         run: |
           python -u build-config/scripts/resonance_cache/upgrade_launcher.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/input0.tar" "$RUNNER_TEMP/input1.tar" "$RUNNER_TEMP/game" "$RUNNER_TEMP/launcher.ipa"
       - name: Verify compiled iOS host libraries
-        if: matrix.game == 'botw'
+        if: matrix.game == 'botw' || matrix.game == 'xenoblade2'
         run: |
           header=dm/host/gen/msl-iphoneos/host_msl_gen.h
           for library in deswz present; do
