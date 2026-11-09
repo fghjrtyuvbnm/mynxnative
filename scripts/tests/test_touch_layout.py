@@ -32,7 +32,8 @@ int main(void) {
     if (fits(1133, 720)) return fits(1133, 720);
     if (fits(600, 420)) return fits(600, 420) + 10;
     if (DM_TABLET_FACE_R * dm_tablet_pad_scale(1133, 720) * 2 < 44) return 20;
-    if (DM_TABLET_STICK_Y < 134 || DM_TABLET_MENU_Y < 230 || DM_TABLET_FACE_Y < 283 || DM_TABLET_SHOULDER_Y < 400) return 21;
+    if (DM_TABLET_STICK_Y < 146 || DM_TABLET_MENU_Y < 242 || DM_TABLET_FACE_Y < 295 || DM_TABLET_SHOULDER_Y < 406) return 21;
+    if (DM_TABLET_STICK_MIN_Y < 116 || DM_TABLET_STICK_MAX_Y < 202) return 27;
     if (!dm_tablet_stick_contains(DM_TABLET_STICK_X, DM_TABLET_STICK_Y)) return 22;
     double x = 130, y = 160;  /* a touch away from the idle centre */
     if (!dm_tablet_stick_contains(x, y)) return 23;
@@ -56,8 +57,9 @@ int main(void) { return 30; } /* No tablet layout to render or hit-test. */
                                     str(REPO / 'dm/ios/Sources'), str(c), '-o', str(exe)],
                                    capture_output=True, text=True)
             self.assertEqual(build.returncode, 0, build.stderr)
-            self.assertEqual(subprocess.run([str(exe)]).returncode, 0,
-                             'Tablet layout is missing or has out-of-bounds/overlapping hit regions')
+            status = subprocess.run([str(exe)]).returncode
+            self.assertNotIn(status, (21, 27), 'Tablet controls and the floating stick regions must move up together')
+            self.assertEqual(status, 0, 'Tablet layout is missing or has out-of-bounds/overlapping hit regions')
 
     def test_touch_only_start_and_hidden_switch(self):
         source='''#include "TouchLayoutPolicy.h"
