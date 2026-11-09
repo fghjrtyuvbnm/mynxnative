@@ -7,13 +7,35 @@ enum {
     DM_TABLET_STICK_MIN_X = 56, DM_TABLET_STICK_MAX_X = 146,
     DM_TABLET_STICK_MIN_Y = -24, DM_TABLET_STICK_MAX_Y = 24,
     DM_TABLET_FACE_X = 93, DM_TABLET_FACE_Y = -166, DM_TABLET_FACE_GAP = 44, DM_TABLET_FACE_R = 24,
-    DM_TABLET_DPAD_R = 41,
     DM_TABLET_SHOULDER_OUT_X = 50, DM_TABLET_SHOULDER_IN_X = 128,
     DM_TABLET_SHOULDER_Y = 116, DM_TABLET_SHOULDER_R = 24,
     DM_TABLET_CLICK_X = 230, DM_TABLET_CLICK_R = 18,
     DM_TABLET_MENU_X = 205, DM_TABLET_MENU_Y = -110, DM_TABLET_MENU_W = 48, DM_TABLET_MENU_H = 36,
     DM_TABLET_KNOB_R = 24
 };
+
+enum { DM_TABLET_UP, DM_TABLET_RIGHT, DM_TABLET_DOWN, DM_TABLET_LEFT, DM_TABLET_DIRECTIONS };
+typedef struct { double x, y; } DmTabletPoint;
+
+static inline DmTabletPoint dm_tablet_dpad_offset(int direction) {
+    static const DmTabletPoint offsets[DM_TABLET_DIRECTIONS] = {
+        {0, -DM_TABLET_FACE_GAP}, {DM_TABLET_FACE_GAP, 0},
+        {0, DM_TABLET_FACE_GAP}, {-DM_TABLET_FACE_GAP, 0}
+    };
+    return offsets[direction];
+}
+
+static inline unsigned dm_tablet_dpad_at(double x, double y) {
+    // A small overlap between adjacent hit circles accepts a one-thumb diagonal.
+    const double radius = DM_TABLET_FACE_R * 1.35;
+    unsigned mask = 0;
+    for (int i = 0; i < DM_TABLET_DIRECTIONS; i++) {
+        DmTabletPoint p = dm_tablet_dpad_offset(i);
+        double dx = x - p.x, dy = y - p.y;
+        if (dx * dx + dy * dy <= radius * radius) mask |= 1u << i;
+    }
+    return mask;
+}
 static inline int dm_tablet_stick_contains(double x, double y) {
     double dx = x - DM_TABLET_STICK_X, dy = y - DM_TABLET_STICK_Y;
     return dx * dx + dy * dy <= DM_TABLET_STICK_R * DM_TABLET_STICK_R ||

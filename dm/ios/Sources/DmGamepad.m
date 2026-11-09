@@ -130,6 +130,7 @@ static const CGFloat
     K_RSWIPE = 1.0 / 3,                             // right stick area: this fraction of the screen width from the right edge (not in u)
     K_CLICK_X = 102, K_CLICK_R = 17;                // L3 / R3: centre from the outer edge (level with ZL / ZR), radius
 static const int k_btns[] = {B_ZL, B_L, B_ZR, B_R, B_MINUS, B_PLUS, B_LS, B_RS};   // keys locked at touch-down (L3 / R3 only in the 3D layout)
+static const int k_tabletDirections[DM_TABLET_DIRECTIONS] = {B_UP, B_RIGHT, B_DOWN, B_LEFT};
 static NSString *const k_layout_key = @"DmPadLayout";   // NSUserDefaults: 0 = 2D, 1 = 3D, 2 = Tap (DM_GAME_PAD_LAYOUT's numbers)
 int dm_opmode(void);   // hle_oe.c: 0 = handheld
 
@@ -212,7 +213,14 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         static NSString *const names[B_N] = {@"A", @"B", @"X", @"Y", @"L3", @"R3", @"L", @"R", @"ZL", @"ZR", @"+", @"−"};
         for (int b = 0; b < B_N; b++) {
             _key[b] = shape(_controls);
-            if (names[b]) _label[b] = label(_key[b], names[b]);   // the D-pad arms carry no label
+            if (names[b]) _label[b] = label(_key[b], names[b]);
+        }
+        if (_tabletPad) {
+            static NSString *const arrows[DM_TABLET_DIRECTIONS] = {@"↑", @"→", @"↓", @"←"};
+            for (int i = 0; i < DM_TABLET_DIRECTIONS; i++) {
+                int b = k_tabletDirections[i];
+                _label[b] = label(_key[b], arrows[i]);
+            }
         }
         _swap = shape(_controls); _swapLabel = label(_swap, @"");
         if (preview) {
@@ -299,7 +307,7 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
     if (_tabletPad) return [self tabletPoint:NO x:DM_TABLET_FACE_X y:DM_TABLET_FACE_Y];
     CGRect s = self.corner; CGFloat u = self.u; return side(s, 0, K_LOW_X * u, CGRectGetMaxY(s) - K_LOW_Y * u);
 }
-- (CGFloat)dpadR { return (_tabletPad ? DM_TABLET_DPAD_R : K_DPAD_R) * self.u; }
+- (CGFloat)dpadR { return K_DPAD_R * self.u; }
 static BOOL isDrop(int b) { return b == B_ZL || b == B_L || b == B_ZR || b == B_R; }
 static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
 - (CGPoint)dropCenter:(int)b { CGRect s = self.safe; CGFloat u = self.u; BOOL z = b == B_ZL || b == B_ZR;
@@ -339,6 +347,15 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 }
 - (uint64_t)dpadAt:(CGPoint)p {   // 8 directions: 45° each, diagonals press two keys; a small centre circle counts as none
     CGPoint c = self.dpadCenter; CGFloat dx = p.x - c.x, dy = p.y - c.y;
+    if (_tabletPad) {
+        CGFloat u = self.u;
+        if (u <= 0) return 0;
+        unsigned directions = dm_tablet_dpad_at(dx / u, dy / u);
+        uint64_t mask = 0;
+        for (int i = 0; i < DM_TABLET_DIRECTIONS; i++)
+            if (directions & (1u << i)) mask |= 1ull << k_tabletDirections[i];
+        return mask;
+    }
     if (hypot(dx, dy) < self.dpadR * 0.25) return 0;
     double a = atan2(-dy, dx) * 180 / M_PI; uint64_t m = 0;
     if (a > -67.5 && a < 67.5) m |= 1ull << B_RIGHT;
@@ -414,7 +431,12 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         // diamond, D-pad, left stick: take the one with the smallest distance / grab radius, if it is <= 1
         CGFloat best = 1; int kind = C_NONE, idx = 0;
         CGFloat f = dist(p, self.faceCenter) / (self.faceGap + self.faceR * 1.6); if (f <= best) { best = f; kind = C_FACE; }
-        if (_full) { CGFloat d = dist(p, self.dpadCenter) / (self.dpadR * K_DPAD_GRAB); if (d < best) { best = d; kind = C_DPAD; } }
+        if (_tabletPad) {
+            if ([self dpadAt:p]) kind = C_DPAD;
+        } else if (_full) {
+            CGFloat d = dist(p, self.dpadCenter) / (self.dpadR * K_DPAD_GRAB);
+            if (d < best) { best = d; kind = C_DPAD; }
+        }
         if (_tabletPad && kind == C_NONE && self.u > 0) {
             idx = p.x >= CGRectGetMidX(self.safe);
             CGPoint local = [self tabletLocal:p right:idx != 0];
@@ -535,8 +557,18 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             setPath(_key[b], CGPathCreateWithRoundedRect(rc, rc.size.height / 2, rc.size.height / 2, NULL)); placeLabel(_label[b], CGPointMake(CGRectGetMidX(rc), CGRectGetMidY(rc)), 18 * u);
         }
     }
-    static const struct { int b; CGFloat angle; } arms[] = {{B_UP, 0}, {B_RIGHT, M_PI_2}, {B_DOWN, M_PI}, {B_LEFT, -M_PI_2}};   // the same arm in 90° steps
-    for (int i = 0; i < 4; i++) setPath(_key[arms[i].b], armPath(self.dpadCenter, self.dpadR, K_ARM_W * u, K_ARM_IN * u, arms[i].angle, 6 * u));
+    for (int i = 0; i < DM_TABLET_DIRECTIONS; i++) {
+        int b = k_tabletDirections[i];
+        CGPoint c = self.dpadCenter;
+        if (_tabletPad) {
+            DmTabletPoint offset = dm_tablet_dpad_offset(i);
+            c = CGPointMake(c.x + offset.x * u, c.y + offset.y * u);
+            setPath(_key[b], circlePath(c, self.faceR));
+            placeLabel(_label[b], c, 20 * u);
+        } else {
+            setPath(_key[b], armPath(c, self.dpadR, K_ARM_W * u, K_ARM_IN * u, i * M_PI_2, 6 * u));
+        }
+    }
     CGPoint sc = self.swapCenter; setPath(_swap, circlePath(sc, K_SWAP_R * u)); placeLabel(_swapLabel, sc, 12 * u);
     if (!_tabletPad) setPath(_ring, circlePath([self stickCentre:0], [self stickR:0]));
     CGFloat k = (_tabletPad ? DM_TABLET_KNOB_R : K_KNOB_R) * u;

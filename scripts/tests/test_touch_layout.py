@@ -32,6 +32,16 @@ int main(void) {
     if (fits(1133, 720)) return fits(1133, 720);
     if (fits(600, 420)) return fits(600, 420) + 10;
     if (DM_TABLET_FACE_R * dm_tablet_pad_scale(1133, 720) * 2 < 44) return 20;
+    for (int i = 0; i < DM_TABLET_DIRECTIONS; i++) {
+        DmTabletPoint c = dm_tablet_dpad_offset(i);
+        double edge = 1 + (double)DM_TABLET_FACE_R / DM_TABLET_FACE_GAP;
+        if (dm_tablet_dpad_at(c.x, c.y) != (1u << i) ||
+            dm_tablet_dpad_at(c.x * edge, c.y * edge) != (1u << i)) return 36;
+        DmTabletPoint next = dm_tablet_dpad_offset((i + 1) % DM_TABLET_DIRECTIONS);
+        if (dm_tablet_dpad_at((c.x + next.x) / 2, (c.y + next.y) / 2) !=
+            ((1u << i) | (1u << ((i + 1) % DM_TABLET_DIRECTIONS)))) return 37;
+    }
+    if (dm_tablet_dpad_at(0, 0) || dm_tablet_dpad_at(0, -80)) return 38;
     if (!dm_tablet_stick_contains(DM_TABLET_STICK_X, DM_TABLET_STICK_Y)) return 22;
     if (!dm_tablet_stick_contains(40, 0) || !dm_tablet_stick_contains(86, -45)) return 28;
     if (dm_tablet_stick_contains(20, 0) || dm_tablet_stick_contains(86, -66)) return 29;
