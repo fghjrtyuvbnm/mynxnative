@@ -35,6 +35,8 @@ int main(void) {
     if (DM_TABLET_STICK_Y < 146 || DM_TABLET_MENU_Y < 242 || DM_TABLET_FACE_Y < 295 || DM_TABLET_SHOULDER_Y < 406) return 21;
     if (DM_TABLET_STICK_MIN_Y < 116 || DM_TABLET_STICK_MAX_Y < 202) return 27;
     if (!dm_tablet_stick_contains(DM_TABLET_STICK_X, DM_TABLET_STICK_Y)) return 22;
+    if (!dm_tablet_stick_contains(40, 146) || !dm_tablet_stick_contains(86, 101)) return 28;
+    if (dm_tablet_stick_contains(20, 146) || dm_tablet_stick_contains(86, 80)) return 29;
     double x = 130, y = 160;  /* a touch away from the idle centre */
     if (!dm_tablet_stick_contains(x, y)) return 23;
     dm_tablet_stick_clamp(&x, &y);
@@ -43,6 +45,23 @@ int main(void) {
     if (dm_tablet_stick_contains(x, y)) return 25;
     dm_tablet_stick_clamp(&x, &y);
     if (x != DM_TABLET_STICK_MIN_X || y != DM_TABLET_STICK_MAX_Y) return 26;
+    const double sizes[] = {90, 100, 110}, lifts[] = {-24, 0, 24};
+    const double windows[][2] = {{1133, 720}, {600, 420}, {480, 320}};
+    for (int w = 0; w < 3; w++) {
+        double width = windows[w][0], height = windows[w][1];
+        DmTabletMetrics normal = dm_tablet_pad_metrics(width, height, 100, 0);
+        if (normal.scale != dm_tablet_pad_scale(width, height) || normal.lift != 0) return 31;
+        DmTabletMetrics invalid = dm_tablet_pad_metrics(width, height, -1, 999);
+        if (invalid.scale != normal.scale || invalid.lift != normal.lift) return 32;
+        for (int s = 0; s < 3; s++) for (int l = 0; l < 3; l++) {
+            DmTabletMetrics m = dm_tablet_pad_metrics(width, height, sizes[s], lifts[l]);
+            double bottom = (DM_TABLET_STICK_Y - DM_TABLET_STICK_R) * m.scale + m.lift;
+            double top = (DM_TABLET_SHOULDER_Y + DM_TABLET_SHOULDER_R * 1.35) * m.scale + m.lift;
+            double inner = (DM_TABLET_MENU_X + DM_TABLET_MENU_W / 2 + 8) * m.scale;
+            if (bottom <= 0 || top >= height || inner >= width / 2) return 33;
+            if ((lifts[l] > 0 && m.lift <= 0) || (lifts[l] < 0 && m.lift >= 0)) return 34;
+        }
+    }
     return 0;
 }
 #else

@@ -134,6 +134,8 @@ static NSString *const k_layout_key = @"DmPadLayout";   // NSUserDefaults: 0 = 2
 int dm_opmode(void);   // hle_oe.c: 0 = handheld
 
 @interface DmGamepad : UIView
+- (instancetype)initWithFrame:(CGRect)frame preview:(BOOL)preview;
+- (void)setTabletSize:(double)size lift:(double)lift;
 @end
 static __weak DmGamepad *g_view;
 static void pads_start(void);   // Physical controllers, below
@@ -142,6 +144,7 @@ static void pads_start(void);   // Physical controllers, below
     NSMapTable<UITouch *, NSNumber *> *_owner;     // touch → control (with the key for C_BTN or the stick for C_STICK, << 8)
     UITouch *_stick[2]; CGPoint _stickNow[2];      // the touch holding each stick and where it is now (0 left, 1 right)
     CGPoint _floatingCentre[2];                    // where each floating stick landed, dragged along past its radius
+    CGPoint _stickTouchOffset[2];                 // edge touches can start outside the centre's travel limits
     uint64_t _faceBits, _dpadBits, _btnBits;
     NSMapTable<UITouch *, NSNumber *> *_faceOf;    // which keys each touch on the diamond currently holds
     CAShapeLayer *_key[B_N]; CATextLayer *_label[B_N];   // one layer per key
@@ -151,6 +154,8 @@ static void pads_start(void);   // Physical controllers, below
     unsigned _hapticSticks;
     BOOL _stickShown;                              // a visible stick was held at the last refresh
     BOOL _tabletPad;                               // this package opts into the iPad layout
+    BOOL _preview;
+    double _tabletSize, _tabletLift;
     BOOL _touchOnly;                              // explicit touch-only package policy
     BOOL _full, _tap;                              // the 3D layout / the Tap layout is current
     CALayer *_controls;                            // holds every control layer: hidden while a physical controller is connected (the view itself stays, for game touches)
@@ -172,11 +177,11 @@ static CATextLayer *label(CALayer *parent, NSString *s) {
 }
 static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   // keys shown only in the 3D layout
 
-- (instancetype)initWithFrame:(CGRect)f {
+- (instancetype)initWithFrame:(CGRect)f preview:(BOOL)preview {
     if ((self = [super initWithFrame:f])) {
         self.multipleTouchEnabled = YES; self.opaque = NO; self.backgroundColor = UIColor.clearColor;
         const char *feedback = getenv("DM_TOUCH_HAPTICS");
-        if (!feedback || atoi(feedback)) {
+        if (!preview && (!feedback || atoi(feedback))) {
             _touchFeedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
             [_touchFeedback prepare];
         }
@@ -190,8 +195,13 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         _controls = [CALayer layer]; [self.layer addSublayer:_controls];
         _ring = shape(_controls); _ring.fillColor = k_ringFill.CGColor;
         _knob = shape(_controls);
-        _tabletPad = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad &&
-                     [NSBundle.mainBundle.infoDictionary[@"DMTabletPad"] boolValue];
+        _preview = preview;
+        self.userInteractionEnabled = !preview;
+        _tabletPad = preview || (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad &&
+                                 [NSBundle.mainBundle.infoDictionary[@"DMTabletPad"] boolValue]);
+        const char *size = getenv("DM_TABLET_PAD_SIZE"), *lift = getenv("DM_TABLET_PAD_LIFT");
+        _tabletSize = !preview && size ? atof(size) : 100;
+        _tabletLift = !preview && lift ? atof(lift) : 0;
         if (_tabletPad) {
             _rightRing = shape(_controls);
             _rightRing.fillColor = k_ringFill.CGColor;
@@ -205,6 +215,11 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             if (names[b]) _label[b] = label(_key[b], names[b]);   // the D-pad arms carry no label
         }
         _swap = shape(_controls); _swapLabel = label(_swap, @"");
+        if (preview) {
+            _full = YES;
+            [self applyLayout];
+            return self;
+        }
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:k_layout_key];
         _touchOnly = [NSBundle.mainBundle.infoDictionary[@"DMTouchOnly"] boolValue];
         int l = dm_initial_pad_layout(DM_GAME_PAD_LAYOUT, (int)saved.integerValue, saved != nil, dm_opmode() == 0, _touchOnly);
@@ -238,21 +253,31 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
 }
 
 // ---- Layout (points; computed inside the safe area) ----
-- (CGRect)safe { return UIEdgeInsetsInsetRect(self.bounds, self.safeAreaInsets); }
+- (CGRect)safe { return _preview ? self.bounds : UIEdgeInsetsInsetRect(self.bounds, self.safeAreaInsets); }
 - (CGRect)corner { UIEdgeInsets i = self.safeAreaInsets; i.left *= K_CORNER_IN; i.right *= K_CORNER_IN; return UIEdgeInsetsInsetRect(self.bounds, i); }   // the rectangle the bottom-corner controls use
+- (void)setTabletSize:(double)size lift:(double)lift {
+    if (size == _tabletSize && lift == _tabletLift) return;
+    _tabletSize = size;
+    _tabletLift = lift;
+    [self setNeedsLayout];
+}
+- (DmTabletMetrics)tabletMetrics:(CGRect)s {
+    return dm_tablet_pad_metrics(s.size.width, s.size.height, _tabletSize, _tabletLift);
+}
 - (CGFloat)u {
-    CGRect s = self.safe;
-    return _tabletPad ? dm_tablet_pad_scale(s.size.width, s.size.height) : MIN(self.bounds.size.height / 430.0, 1.3);
+    return _tabletPad ? [self tabletMetrics:self.safe].scale : MIN(self.bounds.size.height / 430.0, 1.3);
 }
 static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPointMake(right ? CGRectGetMaxX(s) - dx : CGRectGetMinX(s) + dx, y); }
 - (CGPoint)tabletPoint:(BOOL)right x:(CGFloat)x y:(CGFloat)y {
-    CGRect s = self.safe; CGFloat u = self.u;
-    return side(s, right, x * u, CGRectGetMaxY(s) - y * u);
+    CGRect s = self.safe;
+    DmTabletMetrics m = [self tabletMetrics:s];
+    return side(s, right, x * m.scale, CGRectGetMaxY(s) - y * m.scale - m.lift);
 }
 - (CGPoint)tabletLocal:(CGPoint)p right:(BOOL)right {
-    CGRect s = self.safe; CGFloat u = self.u;
+    CGRect s = self.safe;
+    DmTabletMetrics m = [self tabletMetrics:s];
     CGFloat x = right ? CGRectGetMaxX(s) - p.x : p.x - CGRectGetMinX(s);
-    return CGPointMake(x / u, (CGRectGetMaxY(s) - p.y) / u);
+    return CGPointMake(x / m.scale, (CGRectGetMaxY(s) - p.y - m.lift) / m.scale);
 }
 - (CGPoint)faceCenter {
     if (_tabletPad) return [self tabletPoint:YES x:DM_TABLET_FACE_X y:DM_TABLET_FACE_Y];
@@ -401,7 +426,15 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         else if (kind == C_DPAD) [_owner setObject:@(C_DPAD) forKey:t];
         else if (kind == C_STICK) {
             [_owner setObject:@(C_STICK | (uint64_t)idx << 8) forKey:t];
-            _stick[idx] = t; _stickNow[idx] = _floatingCentre[idx] = p;
+            CGPoint centre = p;
+            if (_tabletPad) {
+                CGPoint local = [self tabletLocal:p right:idx != 0];
+                double x = local.x, y = local.y;
+                dm_tablet_stick_clamp(&x, &y);
+                centre = [self tabletPoint:idx != 0 x:x y:y];
+            }
+            _stickTouchOffset[idx] = CGPointMake(centre.x - p.x, centre.y - p.y);
+            _stick[idx] = t; _stickNow[idx] = _floatingCentre[idx] = centre;
         }
         else game |= [self gameBegin:t];
     }
@@ -415,6 +448,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         if (c == C_FACE) [_faceOf setObject:@([self faceAt:p]) forKey:t];
         else if (c == C_STICK) {
             int i = (int)(v >> 8);
+            p.x += _stickTouchOffset[i].x; p.y += _stickTouchOffset[i].y;
             _stickNow[i] = p;
             if (i || _tabletPad) {
                 CGPoint centre = _floatingCentre[i];
@@ -484,7 +518,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    UIWindowScene *ws = self.window.windowScene; if (ws) atomic_store(&g_iface_orient, (int)ws.effectiveGeometry.interfaceOrientation);
+    UIWindowScene *ws = self.window.windowScene; if (!_preview && ws) atomic_store(&g_iface_orient, (int)ws.effectiveGeometry.interfaceOrientation);
     CGFloat u = self.u;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     _controls.frame = self.layer.bounds;
@@ -617,7 +651,11 @@ static BOOL pads_slotted(GCController *gone) {
 }
 @end
 
-UIView *dm_gamepad_view(CGRect frame) { DmGamepad *v = [[DmGamepad alloc] initWithFrame:frame]; g_view = v; return v; }
+UIView *dm_gamepad_view(CGRect frame) { DmGamepad *v = [[DmGamepad alloc] initWithFrame:frame preview:NO]; g_view = v; return v; }
+UIView *dm_tablet_pad_preview(void) { return [[DmGamepad alloc] initWithFrame:CGRectZero preview:YES]; }
+void dm_tablet_pad_preview_update(UIView *view, double size, double lift) {
+    [(DmGamepad *)view setTabletSize:size lift:lift];
+}
 void dm_gamepad_active(void) { dispatch_async(dispatch_get_main_queue(), ^{ for (GCController *c in GCController.controllers) dm_motion_rearm(c); }); }   // On become active: motion_apple.h
 void dm_gamepad_reset(void) {   // On resign active: release everything (a key held while switching away and released in background gets no "release")
     dispatch_async(dispatch_get_main_queue(), ^{ [g_view reset]; });

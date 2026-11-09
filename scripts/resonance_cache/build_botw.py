@@ -103,13 +103,11 @@ def main(repo, archive, work, output):
                                           sha256=hashlib.sha256(payload).hexdigest()))
     raw = json.dumps(manifest, separators=(',', ':')).encode()
     (output/'game-data.json').write_bytes(raw)
+    if comparison:
+        apply_runtime.install_tablet_sources(repo)
     apply_runtime.apply(repo, source=SOURCE)
     display = 'Zelda Breath of the Wild 1.9.0' if comparison else 'Zelda Breath of the Wild'
     bundle = 'org.nxnative.'+TITLE.lower()+('.v190' if comparison else '')
-    if comparison:
-        source_dir = Path(__file__).resolve().parents[2] / 'dm/ios/Sources'
-        for name in ('DmGamepad.m', 'TouchLayoutPolicy.h', 'TabletPadLayout.h'):
-            shutil.copyfile(source_dir/name, repo/'dm/ios/Sources'/name)
     env.update(W=str(work/'ipa'), PATCHED=str(patch), ROMFS=str(extract/'RomFS'), MSL_IOS=str(ios),
                GFXAPI='nvn', FONT_PY=sys.executable, DM_DISPLAY_NAME=display,
                DM_BUNDLE_ID=bundle, DM_APP_VERSION=display_version, DM_LANG='zh-Hans', DM_PSO_GPUS='none',

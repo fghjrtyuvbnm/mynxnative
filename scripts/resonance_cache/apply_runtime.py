@@ -5,6 +5,17 @@ import subprocess
 import sys
 from build_cache_launcher import SOURCE
 
+TABLET_SOURCES = ('DmGamepad.m', 'TouchLayoutPolicy.h', 'TabletPadLayout.h',
+                  'DmIOS-Bridging-Header.h', 'Launcher.swift', 'TabletPadLauncher.swift')
+
+
+def install_tablet_sources(repo):
+    source = pathlib.Path(__file__).resolve().parents[2] / 'dm/ios/Sources'
+    target = repo / 'dm/ios/Sources'
+    for name in TABLET_SOURCES:
+        if (source/name).resolve() != (target/name).resolve():
+            shutil.copyfile(source/name, target/name)
+
 def replace_once(text,old,new):
     if text.count(old)!=1:raise ValueError('Pinned iOS launcher source changed; review the external-data patch')
     return text.replace(old,new,1)
@@ -82,9 +93,10 @@ def apply(repo, source=SOURCE):
     }
     if settings.isEmpty && !ExternalGameDataStore.shared.enabled { return false }'''
         text=replace_once(text,old,new)
-        text=replace_once(text,'    let model = LauncherModel(file.settings)','    let model = LauncherModel(settings)')
-        if 'LauncherModel(file.settings).applySaved()' in text:
-            text=replace_once(text,'LauncherModel(file.settings).applySaved()', 'LauncherModel(settings).applySaved()')
+        factory = 'makeLauncherModel' if 'private func makeLauncherModel(' in text else 'LauncherModel'
+        text=replace_once(text,f'    let model = {factory}(file.settings)',f'    let model = {factory}(settings)')
+        if f'{factory}(file.settings).applySaved()' in text:
+            text=replace_once(text,f'{factory}(file.settings).applySaved()', f'{factory}(settings).applySaved()')
         text=replace_once(text,'''        host = nil
         model.apply()
         h.dismiss(animated: false) { done() }''',

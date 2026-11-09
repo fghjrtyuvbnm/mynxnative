@@ -8,7 +8,7 @@ import sys
 import tarfile
 import zipfile
 
-from apply_runtime import apply
+from apply_runtime import apply, install_tablet_sources
 from build_cache_launcher import run
 from build_botw import map_rows, verify_comparison_settings
 
@@ -76,12 +76,10 @@ def main(repo, archive, overlay, work, output):
         (profile/name).write_bytes((registered/name).read_bytes())
     for name in ('c1_full.tsv', 'cb_extent.tsv'):
         (profile / name).write_bytes((metadata / name).read_bytes())
-    apply(repo, source=SOURCE)
     tablet_pad = comparison or xenoblade or (title == BOTW_TITLE and os.environ.get('BOTW_TABLET_PAD') == '1')
     if tablet_pad:
-        overlay_sources = Path(__file__).resolve().parents[2] / 'dm/ios/Sources'
-        for name in ('DmGamepad.m', 'TouchLayoutPolicy.h', 'TabletPadLayout.h'):
-            (repo / 'dm/ios/Sources' / name).write_bytes((overlay_sources / name).read_bytes())
+        install_tablet_sources(repo)
+    apply(repo, source=SOURCE)
     dd = work / 'xcode-dd'
     env = dict(os.environ, GAME=title, DM_GAME=title, DM_ROOT=str(work), WORK=str(work/'tmp'),
                W=str(work/'ipa'), PATCHED=str(patch), ROMFS=str(extract/'RomFS'),
