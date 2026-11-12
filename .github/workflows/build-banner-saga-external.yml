@@ -67,6 +67,8 @@ jobs:
               for part in parts: stream.write(part.read_bytes())
           transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
           PY
+      - name: Apply bundle-scoped iOS GPU cache cleanup
+        run: git apply --check build-config/.github/gpuarchiver-cleanup.patch && git apply build-config/.github/gpuarchiver-cleanup.patch
       - name: Compile external launcher
         run: |
           set -euo pipefail

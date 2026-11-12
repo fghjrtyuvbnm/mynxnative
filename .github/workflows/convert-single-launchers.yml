@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        game: [uncharted]
+        game: [taiko, refrain, sentinels, uncharted]
     runs-on: xcode-27
     timeout-minutes: 35
     env:
@@ -51,7 +51,7 @@ jobs:
           temp = Path(os.environ['RUNNER_TEMP'])
           game = os.environ['GAME_INPUT']
           key = bytes.fromhex(os.environ['BUILD_CIPHER_KEY'])
-          for index, directory in enumerate(('build-input', 'single-conversion/' + game)):
+          for index, directory in enumerate(('build-input' if game == 'uncharted' else 'build-input-' + game, 'single-conversion/' + game)):
               folder = Path('build-config') / directory
               parts = sorted(folder.rglob('part-*')) or sorted(folder.glob('prepared.enc.part*'))
               if not parts:

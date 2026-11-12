@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        game: ${{ fromJSON(startsWith(inputs.target, 'botw') && '["botw"]' || inputs.target == 'xenoblade2' && '["xenoblade2"]' || inputs.target == 'triangle' && '["triangle"]' || inputs.target == 'three-houses' && '["three-houses"]' || '["unicorn", "octopath-ii"]') }}
+        game: ${{ fromJSON(startsWith(inputs.target, 'botw') && '["botw"]' || inputs.target == 'xenoblade2' && '["xenoblade2"]' || inputs.target == 'triangle' && '["triangle"]' || inputs.target == 'three-houses' && '["three-houses"]' || '["octopath-ii"]') }}
     runs-on: xcode-27
     timeout-minutes: 35
     env:
