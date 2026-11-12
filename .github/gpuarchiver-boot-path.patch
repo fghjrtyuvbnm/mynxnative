@@ -1,6 +1,6 @@
 --- a/dm/gfx/nvn/nvn_mtl.m
 +++ b/dm/gfx/nvn/nvn_mtl.m
-@@ -5864,15 +5864,70 @@
+@@ -5864,15 +5864,89 @@
  // gpuarchiver-* folders are Metal's private compiler state. On the Mac their parent is shared by every program: a directory appearing during our capture or flush may belong
  // to another compiler, and serialization success does not end its lifetime. Only our output archives are ours to remove. iOS can reclaim previous runs' app-private folders
  // at cold start, before this run captures anything; never infer ownership from a live directory delta or remove compiler state at flush/exit.
@@ -18,26 +18,45 @@
 +    struct stat st;
 +    return lstat(path.fileSystemRepresentation, &st) == 0 && S_ISDIR(st.st_mode);
 +}
-+static NSArray<NSString *> *ga_old_folders(NSString *documents) {
++static int ga_check_cache_directory(NSString *path, BOOL optional) {
++    struct stat st;
++    if (lstat(path.fileSystemRepresentation, &st) == 0) {
++        if (S_ISDIR(st.st_mode)) return 0;
++        MLOG("gpuarchiver: skipped cleanup; %s is not a physical directory", path.fileSystemRepresentation);
++        return ENOTDIR;
++    }
++    int error = errno;
++    if (!optional || error != ENOENT) MLOG("gpuarchiver: cannot inspect %s: %s", path.fileSystemRepresentation, strerror(error));
++    return error;
++}
++static NSArray<NSString *> *ga_old_folders(NSString *documents, NSString *bundle) {
 +    if (!documents.isAbsolutePath || ![documents.lastPathComponent isEqualToString:@"Documents"]) {
 +        MLOG("gpuarchiver: skipped cleanup; invalid boot Documents path");
 +        return nil;
 +    }
 +    // Use the container already selected at boot. Check each descendant without following symlinks or relying on path spelling.
 +    NSString *cache = documents.stringByDeletingLastPathComponent;
-+    for (NSString *part in @[@"Library", @"Caches", @"com.apple.gpuarchiver"]) {
++    for (NSString *part in @[@"Library", @"Caches"]) {
 +        cache = [cache stringByAppendingPathComponent:part];
-+        struct stat st;
-+        if (lstat(cache.fileSystemRepresentation, &st) != 0) {
-+            int error = errno;
-+            MLOG("gpuarchiver: cannot inspect %s: %s", cache.fileSystemRepresentation, strerror(error));
-+            return nil;
-+        }
-+        if (!S_ISDIR(st.st_mode)) {
-+            MLOG("gpuarchiver: skipped cleanup; %s is not a physical directory in the game container", part.UTF8String);
-+            return nil;
-+        }
++        if (ga_check_cache_directory(cache, NO)) return nil;
 +    }
++    // LiveContainer's Metal cache is scoped to the guest bundle ID. A normal install can use the unscoped path.
++    if (!bundle.length || [bundle isEqualToString:@"."] || [bundle isEqualToString:@".."] ||
++        [bundle rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"].invertedSet].location != NSNotFound) {
++        MLOG("gpuarchiver: skipped cleanup; invalid app bundle identifier");
++        return nil;
++    }
++    NSString *scoped = [cache stringByAppendingPathComponent:bundle];
++    int status = ga_check_cache_directory(scoped, YES);
++    if (!status) {
++        scoped = [scoped stringByAppendingPathComponent:@"com.apple.gpuarchiver"];
++        status = ga_check_cache_directory(scoped, YES);
++    }
++    if (!status) cache = scoped;
++    else if (status == ENOENT) {
++        cache = [cache stringByAppendingPathComponent:@"com.apple.gpuarchiver"];
++        if (ga_check_cache_directory(cache, NO)) return nil;
++    } else return nil;
 +    NSError *error = nil;
 +    NSArray<NSString *> *names = [NSFileManager.defaultManager contentsOfDirectoryAtPath:cache error:&error];
 +    if (!names) {
@@ -69,7 +88,7 @@
 +}
 +#if TARGET_OS_IPHONE
 +void dm_ios_gpuarchiver_cleanup(NSString *documents) {
-+    NSArray<NSString *> *old = ga_old_folders(documents);
++    NSArray<NSString *> *old = ga_old_folders(documents, NSBundle.mainBundle.bundleIdentifier);
 +    if (old.count) dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
 +        NSUInteger removed = ga_remove_folders(old);
 +        MLOG("gpuarchiver: removed %lu of %lu old Metal work directories from the game cache", (unsigned long)removed, (unsigned long)old.count);
@@ -80,7 +99,7 @@
  static ArchEpoch *ep_new(void) {   // a flush period: its compiler and serializer, nil when Metal makes none
      MTL4PipelineDataSetSerializerDescriptor *sd = [MTL4PipelineDataSetSerializerDescriptor new]; sd.configuration = MTL4PipelineDataSetSerializerConfigurationCaptureBinaries;
      ArchEpoch *ep = [ArchEpoch new]; ep->ser = [g_dev newPipelineDataSetSerializerWithDescriptor:sd];
-@@ -5911,13 +5966,6 @@
+@@ -5911,13 +5985,6 @@
          if (g_arch_dir) {
              g_arch_q = dispatch_queue_create("dm.nvn.pso-archive", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
              g_arch_pending = dispatch_group_create();
