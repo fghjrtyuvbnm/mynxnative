@@ -91,7 +91,13 @@ jobs:
               transform(encrypted, temp / f'input{index}.tar', key, True)
           PY
       - name: Apply iOS GPU work directory cleanup
-        run: git apply --check build-config/.github/gpuarchiver-cleanup.patch && git apply build-config/.github/gpuarchiver-cleanup.patch
+        env:
+          BOTW_BOOT_PATH: ${{ inputs.target == 'botw-190' && '1' || '0' }}
+        run: |
+          patch=build-config/.github/gpuarchiver-cleanup.patch
+          if [ "$BOTW_BOOT_PATH" = 1 ]; then patch=build-config/.github/gpuarchiver-boot-path.patch; fi
+          git apply --check "$patch"
+          git apply "$patch"
       - name: Compile launcher with existing shader identity
         env:
           BOTW_TABLET_PAD: ${{ inputs.target == 'botw-tablet' && '1' || '0' }}
