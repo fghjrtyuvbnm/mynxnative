@@ -59,6 +59,21 @@ jobs:
           PY
       - name: Apply iOS GPU work directory cleanup
         run: git apply --check build-config/.github/gpuarchiver-cleanup-ffr.patch && git apply build-config/.github/gpuarchiver-cleanup-ffr.patch
+      - name: Use the pinned launcher settings format
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          policy = Path('build-config/scripts/package_policy.py')
+          text = policy.read_text()
+          annotation = ",'level=basic'"
+          assert text.count(annotation) == 1
+          policy.write_text(text.replace(annotation, ''))
+          runtime = Path('build-config/scripts/resonance_cache/apply_runtime.py')
+          text = runtime.read_text()
+          install = '    install_controller_policy(repo)\n'
+          assert text.count(install) == 1
+          runtime.write_text(text.replace(install, ''))
+          PY
       - name: Compile and validate launcher
         run: |
           set -euo pipefail
