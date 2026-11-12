@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        game: [taiko, refrain, sentinels]
+        game: [uncharted]
     runs-on: xcode-27
     timeout-minutes: 35
     env:
@@ -36,6 +36,7 @@ jobs:
       - name: Install build tools
         run: |
           brew install xcodegen
+          if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
           python -m pip install lz4 fonttools cryptography
       - name: Restore authenticated build inputs
         env:
@@ -50,7 +51,7 @@ jobs:
           temp = Path(os.environ['RUNNER_TEMP'])
           game = os.environ['GAME_INPUT']
           key = bytes.fromhex(os.environ['BUILD_CIPHER_KEY'])
-          for index, directory in enumerate(('build-input-' + game, 'single-conversion/' + game)):
+          for index, directory in enumerate(('build-input', 'single-conversion/' + game)):
               folder = Path('build-config') / directory
               parts = sorted(folder.rglob('part-*')) or sorted(folder.glob('prepared.enc.part*'))
               if not parts:

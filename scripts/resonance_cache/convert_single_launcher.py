@@ -14,6 +14,7 @@ from build_cache_launcher import run
 
 SOURCE = 'cde88f62068e3d879b083b1a86a7fd78610c7b7b'
 GAMES = {
+    'uncharted': ('v131072', 'Uncharted Waters IV'),
     'taiko': ('v262144', 'Taiko Risshiden V DX'),
     'refrain': ('v131072', 'Labyrinth of Refrain'),
     'sentinels': ('v0', '13 Sentinels: Aegis Rim'),
