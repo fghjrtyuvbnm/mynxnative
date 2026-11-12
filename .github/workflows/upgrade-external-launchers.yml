@@ -90,6 +90,9 @@ jobs:
                       stream.write(part.read_bytes())
               transform(encrypted, temp / f'input{index}.tar', key, True)
           PY
+      - name: Apply iOS GPU work directory cleanup
+        if: inputs.target == 'botw-190'
+        run: git apply --check build-config/.github/botw-gpuarchiver.patch && git apply build-config/.github/botw-gpuarchiver.patch
       - name: Compile launcher with existing shader identity
         env:
           BOTW_TABLET_PAD: ${{ inputs.target == 'botw-tablet' && '1' || '0' }}
@@ -102,6 +105,18 @@ jobs:
           for library in deswz present; do
             grep -Eq "k_host_msl_lib_${library}, [1-9][0-9]*}" "$header"
           done
+      - name: Verify compiled GPU work directory cleanup
+        if: inputs.target == 'botw-190'
+        run: |
+          python - <<'PY'
+          import os, plistlib, zipfile
+          from pathlib import Path
+          with zipfile.ZipFile(Path(os.environ['RUNNER_TEMP']) / 'launcher.ipa') as ipa:
+              root = 'Payload/DmIOS.app/'
+              info = plistlib.loads(ipa.read(root + 'Info.plist'))
+              assert info['CFBundleIdentifier'] == 'org.nxnative.01007ef00011e000.v190'
+              assert b'old Metal work directories from the game cache' in ipa.read(root + info['CFBundleExecutable'])
+          PY
       - name: Encrypt updated IPA
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}

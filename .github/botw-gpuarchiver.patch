@@ -1,0 +1,131 @@
+diff --git a/dm/gfx/nvn/nvn_mtl.m b/dm/gfx/nvn/nvn_mtl.m
+index 86b8eff0..db70d111 100644
+--- a/dm/gfx/nvn/nvn_mtl.m
++++ b/dm/gfx/nvn/nvn_mtl.m
+@@ -5864,15 +5864,36 @@ static void pso_bundle_open(NSMutableArray<id<MTL4Archive>> *archp) {
+ // gpuarchiver-* folders are Metal's private compiler state. On the Mac their parent is shared by every program: a directory appearing during our capture or flush may belong
+ // to another compiler, and serialization success does not end its lifetime. Only our output archives are ours to remove. iOS can reclaim previous runs' app-private folders
+ // at cold start, before this run captures anything; never infer ownership from a live directory delta or remove compiler state at flush/exit.
+-static NSString *ga_dir(void) {
+-    static NSString *dir; static dispatch_once_t once;
+-    dispatch_once(&once, ^{ char b[PATH_MAX]; if (confstr(_CS_DARWIN_USER_CACHE_DIR, b, sizeof b)) dir = [@(b) stringByAppendingPathComponent:@"com.apple.gpuarchiver"]; });
+-    return dir;
+-}
+-static NSSet<NSString *> *ga_list(void) {
+-    NSArray<NSString *> *a = ga_dir() ? [NSFileManager.defaultManager contentsOfDirectoryAtPath:ga_dir() error:nil] : nil;
+-    return [NSSet setWithArray:[a filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"self BEGINSWITH 'gpuarchiver-'"]] ?: @[]];
++#if TARGET_OS_IPHONE || defined(DM_TEST_GPUARCHIVER)
++static BOOL ga_is_directory(NSString *path) {
++    struct stat st;
++    return lstat(path.fileSystemRepresentation, &st) == 0 && S_ISDIR(st.st_mode);
++}
++static NSArray<NSString *> *ga_old_folders(NSString *documents) {
++    if (!documents.isAbsolutePath || ![documents.lastPathComponent isEqualToString:@"Documents"]) return @[];
++    // LiveContainer gives the guest its own Documents directory. Darwin's process cache path is not a reliable guest container locator.
++    NSString *container = documents.stringByDeletingLastPathComponent.stringByResolvingSymlinksInPath;
++    NSString *cache = [container stringByAppendingPathComponent:@"Library/Caches/com.apple.gpuarchiver"];
++    if (![cache isEqualToString:cache.stringByResolvingSymlinksInPath] || !ga_is_directory(cache)) return @[];
++    NSError *error = nil;
++    NSArray<NSString *> *names = [NSFileManager.defaultManager contentsOfDirectoryAtPath:cache error:&error];
++    if (!names) MLOG("gpuarchiver: cannot list the game cache: %s", error.localizedDescription.UTF8String ?: "unknown error");
++    NSMutableArray<NSString *> *folders = [NSMutableArray array];
++    for (NSString *name in names) {
++        if (![name hasPrefix:@"gpuarchiver-"]) continue;
++        NSString *path = [cache stringByAppendingPathComponent:name];
++        if (ga_is_directory(path)) [folders addObject:path];
++    }
++    return folders;
++}
++static NSUInteger ga_remove_folders(NSArray<NSString *> *folders) {
++    NSUInteger removed = 0;
++    for (NSString *path in folders) {
++        if (ga_is_directory(path) && [NSFileManager.defaultManager removeItemAtPath:path error:nil]) removed++;
++    }
++    return removed;
+ }
++#endif
+ static ArchEpoch *ep_new(void) {   // a flush period: its compiler and serializer, nil when Metal makes none
+     MTL4PipelineDataSetSerializerDescriptor *sd = [MTL4PipelineDataSetSerializerDescriptor new]; sd.configuration = MTL4PipelineDataSetSerializerConfigurationCaptureBinaries;
+     ArchEpoch *ep = [ArchEpoch new]; ep->ser = [g_dev newPipelineDataSetSerializerWithDescriptor:sd];
+@@ -5904,6 +5925,14 @@ static void pso4_init(void) {
+     static dispatch_once_t once;
+     dispatch_once(&once, ^{
+         if (!pso4_on() || ![(id)g_dev respondsToSelector:@selector(newCompilerWithDescriptor:error:)]) return;   // no Metal 4 compiler (t_pso_pending's fake device): the MTLDevice path
++#if TARGET_OS_IPHONE
++        NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
++        NSArray<NSString *> *old = ga_old_folders(documents);   // snapshot before this launch starts capturing
++        if (old.count) dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
++            NSUInteger removed = ga_remove_folders(old);
++            MLOG("gpuarchiver: removed %lu of %lu old Metal work directories from the game cache", (unsigned long)removed, (unsigned long)old.count);
++        });
++#endif
+         const char *e = getenv("DM_PSO_ARCHIVE"); NSString *user = pso_user_path();
+         g_arch_dir = e && !strcmp(e, "off") ? nil : e && *e ? @(e) : user ? [user.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"pso_archive"] : nil;
+         NSMutableArray<id<MTL4Archive>> *arch = [NSMutableArray array], *archp = [NSMutableArray array];
+@@ -5911,13 +5940,6 @@ static void pso4_init(void) {
+         if (g_arch_dir) {
+             g_arch_q = dispatch_queue_create("dm.nvn.pso-archive", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+             g_arch_pending = dispatch_group_create();
+-#if TARGET_OS_IPHONE
+-            NSSet<NSString *> *old = ga_list();   // listed before any capture, so this run's own folder is never among them
+-            if (old.count) dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+-                int n = 0; for (NSString *name in old) n += [NSFileManager.defaultManager removeItemAtPath:[ga_dir() stringByAppendingPathComponent:name] error:nil];
+-                MLOG("pipeline archive: %d of Metal's build folders left by earlier runs removed", n);
+-            });
+-#endif
+             uint64_t t0 = bp_now(); unsigned long long bytes = 0;
+             NSMutableArray<NSString *> *runf = [NSMutableArray array];
+             NSArray<NSString *> *names = [[[NSFileManager.defaultManager contentsOfDirectoryAtPath:g_arch_dir error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"self ENDSWITH '.mtl4a'"]]
+diff --git a/dm/gfx/tests/t_pso_archive.m b/dm/gfx/tests/t_pso_archive.m
+index ca1b1a59..196f98e4 100644
+--- a/dm/gfx/tests/t_pso_archive.m
++++ b/dm/gfx/tests/t_pso_archive.m
+@@ -19,6 +19,7 @@ static size_t archive_confstr(int name, char *buffer, size_t length) {
+     return size;
+ }
+ #define confstr archive_confstr
++#define DM_TEST_GPUARCHIVER 1
+ #include "../nvn/nvn_mtl.m"
+ static void archive_cache_cleanup(void) {
+     [NSFileManager.defaultManager removeItemAtPath:@(archive_cache_root) error:nil];
+@@ -253,11 +254,40 @@ static void capture_preserves_foreign_folder(void) {
+     if (proxy->created && [NSFileManager.defaultManager fileExistsAtPath:proxy->fixture])
+         EXPECT("foreign capture: test-owned fixture removed", 1, [NSFileManager.defaultManager removeItemAtPath:proxy->fixture error:nil]);
+ }
++static void reclaim_old_compiler_folders(void) {
++    NSFileManager *fm = NSFileManager.defaultManager;
++    NSString *container = [@(archive_cache_root) stringByAppendingPathComponent:@"guest"];
++    NSString *docs = [container stringByAppendingPathComponent:@"Documents"];
++    NSString *cache = [container stringByAppendingPathComponent:@"Library/Caches/com.apple.gpuarchiver"];
++    NSString *old = [cache stringByAppendingPathComponent:@"gpuarchiver-old"];
++    NSString *live = [cache stringByAppendingPathComponent:@"gpuarchiver-live"];
++    NSString *link = [cache stringByAppendingPathComponent:@"gpuarchiver-link"];
++    NSString *other = [cache stringByAppendingPathComponent:@"other"];
++    NSString *archive = [docs stringByAppendingPathComponent:@"pso_archive"];
++    NSString *foreign = [@(archive_cache_root) stringByAppendingPathComponent:@"com.apple.gpuarchiver/gpuarchiver-foreign"];
++    for (NSString *path in @[old, other, archive, foreign])
++        if (![fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil]) abort();
++    if (![fm createSymbolicLinkAtPath:link withDestinationPath:foreign error:nil]) abort();
++    NSArray<NSString *> *snapshot = ga_old_folders(docs);
++    if (![fm createDirectoryAtPath:live withIntermediateDirectories:NO attributes:nil error:nil]) abort();
++    EXPECT("guest cache: only the old work directory is selected", 1, snapshot.count);
++    EXPECT("guest cache: old folder removed", 1, ga_remove_folders(snapshot));
++    EXPECT("guest cache: old folder gone", 0, [fm fileExistsAtPath:old]);
++    for (NSString *path in @[live, link, other, archive, foreign])
++        EXPECT(path.UTF8String, 1, [fm fileExistsAtPath:path]);
++    NSString *linkedGuest = [@(archive_cache_root) stringByAppendingPathComponent:@"linked-guest"];
++    NSString *linkedDocs = [linkedGuest stringByAppendingPathComponent:@"Documents"];
++    if (![fm createDirectoryAtPath:linkedDocs withIntermediateDirectories:YES attributes:nil error:nil] ||
++        ![fm createSymbolicLinkAtPath:[linkedGuest stringByAppendingPathComponent:@"Library"]
++                 withDestinationPath:[container stringByAppendingPathComponent:@"Library"] error:nil]) abort();
++    EXPECT("guest cache: symlinked Library is ignored", 0, ga_old_folders(linkedDocs).count);
++}
+ int main(int argc, char **argv) { @autoreleasepool {
+     if (!mkdtemp(archive_cache_root)) abort();
+     atexit(archive_cache_cleanup);
+     if (![NSFileManager.defaultManager createDirectoryAtPath:[@(archive_cache_root) stringByAppendingPathComponent:@"com.apple.gpuarchiver"]
+                                withIntermediateDirectories:NO attributes:nil error:nil]) abort();
++    reclaim_old_compiler_folders();
+     char dir[] = "/tmp/t_pso_archive.XXXXXX"; if (!mkdtemp(dir)) abort();
+     setenv("DM_PSO_ARCHIVE", argc == 3 ? argv[2] : dir, 1);
+     mtl_init(); g_q = [g_dev newCommandQueue]; NSError *err = nil;
