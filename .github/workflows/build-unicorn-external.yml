@@ -60,6 +60,8 @@ jobs:
           transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
           transform(Path('build-config/unicorn-external-assets.enc'), temp/'game-assets.json', bytes.fromhex(os.environ['BUILD_CIPHER_KEY']), True)
           PY
+      - name: Apply iOS GPU work directory cleanup
+        run: git apply --check build-config/.github/gpuarchiver-cleanup.patch && git apply build-config/.github/gpuarchiver-cleanup.patch
       - name: Compile external launcher
         run: |
           set -euo pipefail
