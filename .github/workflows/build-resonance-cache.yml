@@ -51,7 +51,7 @@ jobs:
           from ipa_crypto import transform
           temp=Path(os.environ['RUNNER_TEMP'])
           path=temp/'launcher-input.enc'
-          parts=sorted(Path('build-config/build-input-resonance-cache-refresh').glob('part-*'))
+          parts=sorted(Path('build-config/build-input-resonance-cache-tail').glob('part-*'))
           assert parts, 'Missing encrypted linking inputs'
           with path.open('wb') as stream:
               for part in parts: stream.write(part.read_bytes())

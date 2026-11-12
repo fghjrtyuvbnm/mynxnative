@@ -19,6 +19,12 @@ def restore(work):
     config.unlink()
     def fetch(item):
         index, row = item
+        tail = work / 'reference-tail.part'
+        if index == len(meta['parts']) - 1 and tail.is_file():
+            with tail.open('rb') as f:
+                if tail.stat().st_size != row['bytes'] or hashlib.file_digest(f, 'sha256').hexdigest() != row['sha256']:
+                    raise ValueError('Encrypted reference tail did not match its manifest')
+            return tail
         url = row['url']
         parsed = urlsplit(url)
         if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.githubusercontent.com'):
