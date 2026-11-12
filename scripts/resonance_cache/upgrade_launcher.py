@@ -14,7 +14,8 @@ from build_botw import map_rows, verify_comparison_settings
 
 SOURCE = 'cde88f62068e3d879b083b1a86a7fd78610c7b7b'
 APP = 'Payload/DmIOS.app/'
-VERSIONS = {'010054B01AD92000': ('v262144', 'merged', 'Unicorn Overlord'),
+VERSIONS = {'0100CC80140F8000': ('v262144', 'v262144', 'TRIANGLE STRATEGY'),
+            '010054B01AD92000': ('v262144', 'merged', 'Unicorn Overlord'),
             '0100A3501946E000': ('v131072', 'v131072', 'OCTOPATH TRAVELER II'),
             '010055D009F78000': ('v327680', 'v327680', 'Fire Emblem Three Houses'),
             '0100F3400332C000': ('v917504', 'v917504', 'Xenoblade Chronicles 2'),
