@@ -57,6 +57,8 @@ jobs:
               for part in parts: stream.write(part.read_bytes())
           transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
           PY
+      - name: Apply iOS GPU work directory cleanup
+        run: git apply --check build-config/.github/gpuarchiver-cleanup-ffr.patch && git apply build-config/.github/gpuarchiver-cleanup-ffr.patch
       - name: Compile and validate launcher
         run: |
           set -euo pipefail

@@ -66,6 +66,8 @@ jobs:
           transform(encrypted, dest / 'prepared.tar.xz', bytes.fromhex(os.environ['BUILD_CIPHER_KEY']), True)
           encrypted.unlink()
           PY
+      - name: Apply iOS GPU work directory cleanup
+        run: git apply --check build-config/.github/gpuarchiver-cleanup.patch && git apply build-config/.github/gpuarchiver-cleanup.patch
       - name: Compile Metal libraries and unsigned iOS template
         run: python -u build-config/scripts/cloud_compile_torneko_cache.py "$RUNNER_TEMP/prepared.tar.xz" "$RUNNER_TEMP/game" "$GITHUB_WORKSPACE"
       - name: Verify and encrypt compiled template

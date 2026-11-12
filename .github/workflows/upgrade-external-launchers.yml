@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        game: ${{ fromJSON(startsWith(inputs.target, 'botw') && '["botw"]' || inputs.target == 'xenoblade2' && '["xenoblade2"]' || '["unicorn", "octopath-ii", "three-houses"]') }}
+        game: ${{ fromJSON(startsWith(inputs.target, 'botw') && '["botw"]' || inputs.target == 'xenoblade2' && '["xenoblade2"]' || '["unicorn", "octopath-ii"]') }}
     runs-on: xcode-27
     timeout-minutes: 35
     env:
@@ -90,6 +90,8 @@ jobs:
                       stream.write(part.read_bytes())
               transform(encrypted, temp / f'input{index}.tar', key, True)
           PY
+      - name: Apply iOS GPU work directory cleanup
+        run: git apply --check build-config/.github/gpuarchiver-cleanup.patch && git apply build-config/.github/gpuarchiver-cleanup.patch
       - name: Compile launcher with existing shader identity
         env:
           BOTW_TABLET_PAD: ${{ inputs.target == 'botw-tablet' && '1' || '0' }}

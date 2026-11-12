@@ -61,6 +61,8 @@ jobs:
                       stream.write(part.read_bytes())
               transform(encrypted, temp / f'input{index}.tar', key, True)
           PY
+      - name: Apply iOS GPU work directory cleanup
+        run: git apply --check build-config/.github/gpuarchiver-cleanup.patch && git apply build-config/.github/gpuarchiver-cleanup.patch
       - name: Compile launcher with existing shader identity
         run: |
           python -u build-config/scripts/resonance_cache/convert_single_launcher.py "${{ matrix.game }}" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/input0.tar" "$RUNNER_TEMP/input1.tar" "$RUNNER_TEMP/game" "$RUNNER_TEMP/launcher.ipa"
