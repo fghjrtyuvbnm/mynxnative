@@ -1,3 +1,4 @@
+import os
 """Restore only authenticated link modules from existing private release assets."""
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -13,6 +14,9 @@ from urllib.request import urlopen
 
 def restore(work):
     config = work / 'reference-transfer.json'
+    refreshed = os.environ.get('FFR_TRANSFER_REFRESH')
+    if refreshed:
+        config = Path(refreshed)
     if not config.is_file():
         return
     meta = json.loads(config.read_text())

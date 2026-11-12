@@ -1,6 +1,6 @@
 --- a/dm/gfx/nvn/nvn_mtl.m
 +++ b/dm/gfx/nvn/nvn_mtl.m
-@@ -5082,57 +5082,47 @@
+@@ -5082,54 +5082,89 @@
      g_arch_bundle = a; g_bundle_dir = dir; [archp addObject:a];
      MLOG("pipeline archive bundled with the app: %s, %.1f MB, opened in %.1f ms", p.UTF8String, [[NSFileManager.defaultManager attributesOfItemAtPath:p error:nil] fileSize] / 1048576.0, (bp_now() - t0) / 1e6);
  }
@@ -57,46 +57,88 @@
 +    struct stat st;
 +    return lstat(path.fileSystemRepresentation, &st) == 0 && S_ISDIR(st.st_mode);
 +}
-+static NSArray<NSString *> *ga_old_folders(NSString *documents) {
-+    if (!documents.isAbsolutePath || ![documents.lastPathComponent isEqualToString:@"Documents"]) return @[];
-+    // LiveContainer gives the guest its own Documents directory. Darwin's process cache path is not a reliable guest container locator.
-+    NSString *container = documents.stringByDeletingLastPathComponent.stringByResolvingSymlinksInPath;
-+    NSString *cache = [container stringByAppendingPathComponent:@"Library/Caches/com.apple.gpuarchiver"];
-+    if (![cache isEqualToString:cache.stringByResolvingSymlinksInPath] || !ga_is_directory(cache)) return @[];
++static int ga_check_cache_directory(NSString *path, BOOL optional) {
++    struct stat st;
++    if (lstat(path.fileSystemRepresentation, &st) == 0) {
++        if (S_ISDIR(st.st_mode)) return 0;
++        MLOG("gpuarchiver: skipped cleanup; %s is not a physical directory", path.fileSystemRepresentation);
++        return ENOTDIR;
++    }
++    int error = errno;
++    if (!optional || error != ENOENT) MLOG("gpuarchiver: cannot inspect %s: %s", path.fileSystemRepresentation, strerror(error));
++    return error;
++}
++static NSArray<NSString *> *ga_old_folders(NSString *documents, NSString *bundle) {
++    if (!documents.isAbsolutePath || ![documents.lastPathComponent isEqualToString:@"Documents"]) {
++        MLOG("gpuarchiver: skipped cleanup; invalid boot Documents path");
++        return nil;
++    }
++    // Use the container already selected at boot. Check each descendant without following symlinks or relying on path spelling.
++    NSString *cache = documents.stringByDeletingLastPathComponent;
++    for (NSString *part in @[@"Library", @"Caches"]) {
++        cache = [cache stringByAppendingPathComponent:part];
++        if (ga_check_cache_directory(cache, NO)) return nil;
++    }
++    // LiveContainer's Metal cache is scoped to the guest bundle ID. A normal install can use the unscoped path.
++    if (!bundle.length || [bundle isEqualToString:@"."] || [bundle isEqualToString:@".."] ||
++        [bundle rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"].invertedSet].location != NSNotFound) {
++        MLOG("gpuarchiver: skipped cleanup; invalid app bundle identifier");
++        return nil;
++    }
++    NSString *scoped = [cache stringByAppendingPathComponent:bundle];
++    int status = ga_check_cache_directory(scoped, YES);
++    if (!status) {
++        scoped = [scoped stringByAppendingPathComponent:@"com.apple.gpuarchiver"];
++        status = ga_check_cache_directory(scoped, YES);
++    }
++    if (!status) cache = scoped;
++    else if (status == ENOENT) {
++        cache = [cache stringByAppendingPathComponent:@"com.apple.gpuarchiver"];
++        if (ga_check_cache_directory(cache, NO)) return nil;
++    } else return nil;
 +    NSError *error = nil;
 +    NSArray<NSString *> *names = [NSFileManager.defaultManager contentsOfDirectoryAtPath:cache error:&error];
-+    if (!names) MLOG("gpuarchiver: cannot list the game cache: %s", error.localizedDescription.UTF8String ?: "unknown error");
++    if (!names) {
++        MLOG("gpuarchiver: cannot list the game cache: %s", error.localizedDescription.UTF8String ?: "unknown error");
++        return nil;
++    }
 +    NSMutableArray<NSString *> *folders = [NSMutableArray array];
 +    for (NSString *name in names) {
 +        if (![name hasPrefix:@"gpuarchiver-"]) continue;
 +        NSString *path = [cache stringByAppendingPathComponent:name];
 +        if (ga_is_directory(path)) [folders addObject:path];
 +    }
++    MLOG("gpuarchiver: found %lu old work directories among %lu entries in %s", (unsigned long)folders.count, (unsigned long)names.count, cache.fileSystemRepresentation);
 +    return folders;
 +}
 +static NSUInteger ga_remove_folders(NSArray<NSString *> *folders) {
 +    NSUInteger removed = 0;
++    BOOL loggedFailure = NO;
 +    for (NSString *path in folders) {
-+        if (ga_is_directory(path) && [NSFileManager.defaultManager removeItemAtPath:path error:nil]) removed++;
++        if (!ga_is_directory(path)) continue;
++        NSError *error = nil;
++        if ([NSFileManager.defaultManager removeItemAtPath:path error:&error]) removed++;
++        else if (!loggedFailure) {
++            loggedFailure = YES;
++            MLOG("gpuarchiver: could not remove %s: %s", path.lastPathComponent.UTF8String, error.localizedDescription.UTF8String ?: "unknown error");
++        }
 +    }
 +    return removed;
 +}
++#if TARGET_OS_IPHONE
++void dm_ios_gpuarchiver_cleanup(NSString *documents) {
++    NSArray<NSString *> *old = ga_old_folders(documents, NSBundle.mainBundle.bundleIdentifier);
++    if (old.count) dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
++        NSUInteger removed = ga_remove_folders(old);
++        MLOG("gpuarchiver: removed %lu of %lu old Metal work directories from the game cache", (unsigned long)removed, (unsigned long)old.count);
++    });
++}
++#endif
 +#endif
  static void pso4_init(void) {
      static dispatch_once_t once;
      dispatch_once(&once, ^{
-+#if TARGET_OS_IPHONE
-+        NSString *documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-+        NSArray<NSString *> *old = ga_old_folders(documents);   // snapshot before this launch starts capturing
-+        if (old.count) dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-+            NSUInteger removed = ga_remove_folders(old);
-+            MLOG("gpuarchiver: removed %lu of %lu old Metal work directories from the game cache", (unsigned long)removed, (unsigned long)old.count);
-+        });
-+#endif
-         if (!pso4_on() || ![(id)g_dev respondsToSelector:@selector(newCompilerWithDescriptor:error:)]) return;   // no Metal 4 compiler (t_pso_pending's fake device): the MTLDevice path
-         const char *e = getenv("DM_PSO_ARCHIVE"); NSString *user = pso_user_path();
-         g_arch_dir = e && !strcmp(e, "off") ? nil : e && *e ? @(e) : user ? [user.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"pso_archive"] : nil;
-@@ -5143,14 +5133,6 @@
+@@ -5143,14 +5178,6 @@
              g_arch_q = dispatch_queue_create("dm.nvn.pso-archive", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
              MTL4PipelineDataSetSerializerDescriptor *sd = [MTL4PipelineDataSetSerializerDescriptor new]; sd.configuration = MTL4PipelineDataSetSerializerConfigurationCaptureBinaries;
              ser = [g_dev newPipelineDataSetSerializerWithDescriptor:sd];
@@ -111,7 +153,7 @@
              uint64_t t0 = bp_now(); unsigned long long bytes = 0;
              NSMutableArray<NSString *> *runf = [NSMutableArray array];
              NSArray<NSString *> *names = [[[NSFileManager.defaultManager contentsOfDirectoryAtPath:g_arch_dir error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"self ENDSWITH '.mtl4a'"]]
-@@ -5191,7 +5173,6 @@
+@@ -5191,7 +5218,6 @@
      if (compacting) [arch_compact_stamp() writeToFile:arch_compact_marker() atomically:YES encoding:NSUTF8StringEncoding error:nil];
      BOOL ok = [g_ser4 serializeAsArchiveAndFlushToURL:[NSURL fileURLWithPath:tmp] error:&e];
      if (compacting) unlink(arch_compact_marker().fileSystemRepresentation);
@@ -119,7 +161,7 @@
      pthread_rwlock_unlock(&g_arch_rw);
      ok = ok && !rename(tmp.fileSystemRepresentation, path.fileSystemRepresentation);
      if (!ok) { MLOG("[RED] pipeline archive: writing %s failed%s%s", path.UTF8String, e ? ": " : "", e ? e.localizedDescription.UTF8String : ""); unlink(tmp.fileSystemRepresentation); return; }
-@@ -5288,13 +5269,13 @@
+@@ -5288,13 +5314,13 @@
          if (recap) {
              // Metal can crash in materializeAirNTFromOnlineForSlice when serializing archive imports mixed with fresh bases (#342).
              // Work around that framework bug by capturing the original shader functions, without lookupArchives. The normal compiler cache still applies.
@@ -135,7 +177,7 @@
                  g_pt_comp_ns += bp_now() - t1;
                  if (base) { g_pb_built++; if (vd) g_arch_new_vd++; if (g_ser4) arch_note_new(); }
              }
-@@ -5522,7 +5503,7 @@
+@@ -5522,7 +5548,7 @@
          for (id<MTL4Archive> a in g_arch4p) if ([a newRenderPipelineStateWithDescriptor:m error:nil]) { g_pre_archived++; return; }
          for (id<MTL4Archive> a in g_arch4) if ([a newRenderPipelineStateWithDescriptor:m error:nil]) { g_pre_archived++; return; }
          NSError *e = nil;
@@ -144,3 +186,21 @@
          if (ps) { g_pre_built++; atomic_fetch_add(&g_arch_new, 1); }
          else { if (g_pre_failed++ < 4) MLOG("[RED] pipeline prebuild: the base of %s + %s failed: %s", vk.UTF8String, fk.UTF8String, e.localizedDescription.UTF8String); }
      }
+--- a/dm/ios/Sources/main.m
++++ b/dm/ios/Sources/main.m
+@@ -11,6 +11,7 @@
+ int dm_main(int argc, char **argv);   // dm/host/main.c compiled in with -Dmain=dm_main
+ UIViewController *front_ios_root(void);
+ void front_ios_focus_event(int ev);
++void dm_ios_gpuarchiver_cleanup(NSString *documents);
+ 
+ static char *g_argv[4]; static int g_argc;
+ 
+@@ -37,6 +38,7 @@
+     NSString *log = [doc stringByAppendingPathComponent:@"log.txt"], *prev = [doc stringByAppendingPathComponent:@"log.prev.txt"];
+     [fm removeItemAtPath:prev error:nil]; [fm moveItemAtPath:log toPath:prev error:nil];
+     if (freopen(log.fileSystemRepresentation, "w", stderr)) setvbuf(stderr, NULL, _IOLBF, 0);
++    dm_ios_gpuarchiver_cleanup(doc);
+     // Environment switch files (for on-device diagnostics: a sideloaded app cannot be given environment variables from outside): one KEY=VALUE per line, # starts a comment; Documents/env.txt takes precedence over dm/env.txt in the bundle (put there by build_ipa.sh's DM_ENV_FILE)
+     NSMutableArray<NSString *> *from_file = [NSMutableArray array];
+     for (NSString *ef in @[[doc stringByAppendingPathComponent:@"env.txt"], [[res stringByAppendingPathComponent:@"dm"] stringByAppendingPathComponent:@"env.txt"]]) {

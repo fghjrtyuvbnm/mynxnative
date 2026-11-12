@@ -56,6 +56,7 @@ jobs:
           with path.open('wb') as stream:
               for part in parts: stream.write(part.read_bytes())
           transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
+          transform(Path('build-config/build-input-resonance-cache-tail/reference-transfer.enc'),temp/'reference-transfer.refresh.json',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
           PY
       - name: Apply iOS GPU work directory cleanup
         run: git apply --check build-config/.github/gpuarchiver-cleanup-ffr.patch && git apply build-config/.github/gpuarchiver-cleanup-ffr.patch
@@ -75,6 +76,8 @@ jobs:
           runtime.write_text(text.replace(install, ''))
           PY
       - name: Compile and validate launcher
+        env:
+          FFR_TRANSFER_REFRESH: ${{ runner.temp }}/reference-transfer.refresh.json
         run: |
           set -euo pipefail
           python -u build-config/scripts/resonance_cache/build_cache_launcher.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/game" "$RUNNER_TEMP/launcher-input.tar.xz" "$RUNNER_TEMP/FFR-cache.ipa"
