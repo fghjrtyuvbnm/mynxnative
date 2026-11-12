@@ -67,7 +67,7 @@ jobs:
           text = policy.read_text()
           annotation = ",'level=basic'"
           assert text.count(annotation) == 1
-          policy.write_text(text.replace(annotation, ''))
+          policy.write_text(text.replace(annotation, '').replace("'platform:ios'", "'always'"))
           runtime = Path('build-config/scripts/resonance_cache/apply_runtime.py')
           text = runtime.read_text()
           install = '    install_controller_policy(repo)\n'
