@@ -1,0 +1,113 @@
+name: Build Persona5Royal external-data IPA
+on:
+  push:
+    branches: [codex/persona5royal-asia102]
+    paths: [.github/workflows/build-persona5royal-external.yml, 'build-input-persona5royal/**']
+permissions:
+  contents: read
+concurrency:
+  group: persona5royal-external-ipa
+  cancel-in-progress: false
+jobs:
+  launcher:
+    if: github.event.repository.private == false
+    runs-on: xcode-27
+    timeout-minutes: 300
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: seedds/nxnative
+          ref: cde88f62068e3d879b083b1a86a7fd78610c7b7b
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: build-config
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.14'
+      - name: Test shader cache recovery and reuse
+        run: |
+          set -euo pipefail
+          dir=build-config/scripts/resonance_cache
+          xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" "$dir/ShaderCacheTests.swift" -o "$RUNNER_TEMP/shader-cache-tests"
+          "$RUNNER_TEMP/shader-cache-tests"
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          [[ "$(xcrun --sdk iphoneos --show-sdk-version)" == 27.2* ]]
+          brew install xcodegen zstd glslang
+          if ! dotnet --list-sdks | grep -q '^10\.'; then brew install dotnet@10; echo "$(brew --prefix dotnet@10)/bin" >> "$GITHUB_PATH"; fi
+          if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
+          python -m pip install lz4 capstone fonttools cryptography requests
+      - name: Restore authenticated linking inputs
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0,'build-config/scripts')
+          from ipa_crypto import transform
+          temp=Path(os.environ['RUNNER_TEMP'])
+          path=temp/'launcher-input.enc'
+          parts=sorted(Path('build-config/build-input-persona5royal').rglob('part-*'))
+          assert parts, 'Missing encrypted linking inputs'
+          with path.open('wb') as stream:
+              for part in parts: stream.write(part.read_bytes())
+          transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
+          PY
+      - name: Compile external launcher
+        run: |
+          set -euo pipefail
+          python -u build-config/scripts/resonance_cache/build_persona5royal.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/launcher-input.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output"
+      - name: Report build diagnostics
+        if: failure()
+        run: |
+          for name in mac_host_make mac_host_build heap_check dmsh_build; do
+            path="$RUNNER_TEMP/game/logs/$name.log"
+            if [ -f "$path" ]; then tail -40 "$path"; fi
+          done
+      - name: Encrypt build diagnostics
+        if: always()
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          python - <<'PY'
+          import os, tarfile, sys
+          from pathlib import Path
+          sys.path.insert(0,'build-config/scripts')
+          from ipa_crypto import transform
+          temp=Path(os.environ['RUNNER_TEMP']); work=temp/'game'
+          with tarfile.open(temp/'persona5royal-diagnostics.tar','w') as tar:
+              for name in ('logs','profile'):
+                  path=work/name
+                  if path.exists(): tar.add(path,name)
+          transform(temp/'persona5royal-diagnostics.tar',temp/'persona5royal-diagnostics.enc',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']))
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: Persona5Royal-encrypted-diagnostics
+          path: ${{ runner.temp }}/persona5royal-diagnostics.enc
+          retention-days: 1
+          compression-level: 0
+      - name: Encrypt unsigned IPA and shader pack
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          set -euo pipefail
+          tar -cf "$RUNNER_TEMP/persona5royal.tar" -C "$RUNNER_TEMP/output" Persona5Royal.ipa game-data.json shaders.pack
+          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/persona5royal.tar" "$RUNNER_TEMP/persona5royal.enc"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Persona5Royal-encrypted-external-build
+          path: ${{ runner.temp }}/persona5royal.enc
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
