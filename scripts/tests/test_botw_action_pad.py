@@ -23,17 +23,25 @@ class BotwActionPad(unittest.TestCase):
 #include "BotwActionPad.h"
 #include <assert.h>
 int main(void) {
-    const double windows[][2] = {{1133, 720}, {600, 420}, {480, 320}};
-    for (unsigned w = 0; w < 3; ++w) {
+    assert(DM_ACTION_STICK_R == 2 * DM_ACTION_RADIUS);
+    assert(dm_action_buttons[DM_ACTION_JUMP].button == B_X);
+    assert(dm_action_buttons[DM_ACTION_ATTACK].button == B_Y);
+    assert(dm_action_buttons[DM_ACTION_JUMP].y < dm_action_buttons[DM_ACTION_ATTACK].y);
+    const double windows[][2] = {{1133, 720}, {600, 420}, {480, 320}, {320, 480}};
+    for (unsigned w = 0; w < sizeof(windows) / sizeof(windows[0]); ++w) {
         double width = windows[w][0], height = windows[w][1];
         double scale = dm_action_scale(width, height);
         for (int i = 0; i < DM_ACTION_COUNT; ++i) {
             DmActionButton a = dm_action_buttons[i];
-            assert((fabs((double)a.y) + DM_ACTION_RADIUS + 6) * scale <= height / 5);
+            assert((fabs((double)a.y) + DM_ACTION_RADIUS + 6) * scale <= height * 0.24);
             assert((a.x + DM_ACTION_RADIUS) * scale < width / 2);
             assert(a.x > DM_ACTION_RADIUS);
-            assert(hypot(a.x - dm_action_stick_x(a.right), a.y)
-                   >= DM_ACTION_RADIUS + DM_ACTION_STICK_R);
+            double dx = a.x - dm_action_stick_x(a.right);
+            assert(hypot(dx, a.y) >= DM_ACTION_RADIUS + DM_ACTION_STICK_R + 8);
+            double badgeX = dx + (a.right ? -1 : 1) * DM_ACTION_RADIUS * 0.68;
+            double badgeY = a.y - DM_ACTION_RADIUS * 0.72;
+            assert(hypot(fmax(fabs(badgeX) - 10, 0), fmax(fabs(badgeY) - 5.5, 0))
+                   >= DM_ACTION_STICK_R + 8);
             assert(dm_action_hit(a.right, a.x, a.y) == i);
             for (int j = 0; j < i; ++j) {
                 DmActionButton b = dm_action_buttons[j];
@@ -46,6 +54,9 @@ int main(void) {
     assert(dm_action_stick_contains(0, dm_action_stick_x(0), 0));
     assert(dm_action_stick_contains(1, dm_action_stick_x(1), 0));
     assert(!dm_action_stick_contains(1, 200, 0));
+    double x = 200, y = 80;
+    dm_action_stick_clamp(1, &x, &y);
+    assert(hypot(x - dm_action_stick_x(1), y) <= 7.01);
     DmActionInput input = {0};
     dm_action_toggle(&input, DM_ACTION_LOCK);
     dm_action_toggle(&input, DM_ACTION_WEAPON);
