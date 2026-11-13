@@ -21,7 +21,7 @@ static const DmActionButton dm_action_buttons[DM_ACTION_COUNT] = {
     {153,-33,1,B_R}, {145,77,0,B_DOWN},
 };
 
-static inline double dm_action_scale(double w, double h) { return fmax(0, fmin(h / 654, w / 450)); }
+static inline double dm_action_scale(double w, double h) { return fmax(0, fmin(h / 550, w / 450)); }
 static inline double dm_action_stick_x(int right) { return right ? 102 : 95; }
 static inline int dm_action_hit(int right, double x, double y) {
     int best = -1;
@@ -53,6 +53,14 @@ static inline void dm_action_toggle(DmActionInput *input, int action) {
 }
 static inline uint64_t dm_action_bits(DmActionInput input) {
     return input.menu | ((uint64_t)input.lock << B_ZL);
+}
+/* Breath of the Wild reads the guest's right stick for quick selection. */
+static inline void dm_action_route_sticks(DmActionInput input, int32_t axes[4]) {
+    if (!input.menu) return;
+    axes[2] = axes[0];
+    axes[3] = axes[1];
+    axes[0] = 0;
+    axes[1] = 0;
 }
 static inline void dm_action_clear(DmActionInput *input) { *input = (DmActionInput){0}; }
 #endif

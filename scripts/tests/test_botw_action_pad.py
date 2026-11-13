@@ -15,6 +15,7 @@ class BotwActionPad(unittest.TestCase):
         self.assertIn('setBool:_actionPad forKey:k_botw_layout_key', text)
         self.assertIn('dm_action_clear(&_actionInput)', text.split('- (void)reset {')[1])
         self.assertIn('dm_action_bits(_actionInput)', text)
+        self.assertTrue('dm_action_route_sticks(_actionInput, ax)' in text)
 
     def test_geometry_and_independent_latches(self):
         source = r"""
@@ -28,7 +29,7 @@ int main(void) {
         double scale = dm_action_scale(width, height);
         for (int i = 0; i < DM_ACTION_COUNT; ++i) {
             DmActionButton a = dm_action_buttons[i];
-            assert((fabs((double)a.y) + DM_ACTION_RADIUS + 6) * scale <= height / 6);
+            assert((fabs((double)a.y) + DM_ACTION_RADIUS + 6) * scale <= height / 5);
             assert((a.x + DM_ACTION_RADIUS) * scale < width / 2);
             assert(a.x > DM_ACTION_RADIUS);
             assert(hypot(a.x - dm_action_stick_x(a.right), a.y)
@@ -41,7 +42,7 @@ int main(void) {
             }
         }
     }
-    assert(dm_action_scale(1133, 720) * 2 * DM_ACTION_RADIUS >= 44);
+    assert(dm_action_scale(1133, 720) * 2 * DM_ACTION_RADIUS >= 54);
     assert(dm_action_stick_contains(0, dm_action_stick_x(0), 0));
     assert(dm_action_stick_contains(1, dm_action_stick_x(1), 0));
     assert(!dm_action_stick_contains(1, 200, 0));
@@ -53,9 +54,25 @@ int main(void) {
     assert(dm_action_bits(input) == ((1u << B_ZL) | (1u << B_LEFT)));
     dm_action_toggle(&input, DM_ACTION_SHIELD);
     assert(dm_action_bits(input) == (1u << B_ZL));
+    for (int menu = DM_ACTION_WEAPON; menu <= DM_ACTION_RUNE_MENU; ++menu) {
+        dm_action_toggle(&input, menu);
+        /* A held bow trigger combines with the quick menu and lock bits. */
+        uint64_t buttons = (1u << B_ZR) | dm_action_bits(input);
+        assert(buttons == ((1u << B_ZR) | (1u << B_ZL) | (1u << dm_action_buttons[menu].button)));
+        int32_t sticks[] = {-12345, 23456, 300, -900};
+        dm_action_route_sticks(input, sticks);
+        assert(sticks[0] == 0 && sticks[1] == 0 && sticks[2] == -12345 && sticks[3] == 23456);
+        dm_action_toggle(&input, menu);
+        int32_t movement[] = {100, -200, -300, 400};
+        dm_action_route_sticks(input, movement);
+        assert(movement[0] == 100 && movement[1] == -200 && movement[2] == -300 && movement[3] == 400);
+    }
     dm_action_toggle(&input, DM_ACTION_RUNE_MENU);
     dm_action_clear(&input);
     assert(dm_action_bits(input) == 0);
+    int32_t sticks[] = {100, -200, -300, 400};
+    dm_action_route_sticks(input, sticks);
+    assert(sticks[0] == 100 && sticks[1] == -200 && sticks[2] == -300 && sticks[3] == 400);
     return 0;
 }
 #else
