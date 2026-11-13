@@ -14,7 +14,7 @@ env:
   TOOLS_COMMIT: 5f7e0176bc02a99923df1eddcb769a271bfb654b
   UPSTREAM_COMMIT: 18bd146f00fcadd0921beb9496c61e023c5950a1
   SOURCE_REPOSITORY: jhaizhou-ops/d2r-mobile
-  INPUT_REVISION: 354688fd9eabce0250000ca1c4554460daaed6fdc9b102d81bc1d8981232a98a
+  INPUT_REVISION: 0fd2730b5ff8ee5317289e356db8c1e6c015d8caff2e232b572f27a5d77898df
   PREPARED_INPUT: '{"url":"https://github.com/jiayx/d2r-mobile-build/releases/download/ios-program-refresh-v2-16fa8e122c7c6b7f2e99f5de07ccc9c998ca93b27dad748daab3f57ab62c516e/D2RMobile-Prepared.zip","sha256":"354688fd9eabce0250000ca1c4554460daaed6fdc9b102d81bc1d8981232a98a"}'
 jobs:
   prepare:
