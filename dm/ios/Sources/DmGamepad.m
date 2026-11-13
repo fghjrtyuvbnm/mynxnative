@@ -1,7 +1,7 @@
 // Virtual gamepad (Nintendo button positions) + physical controllers (GameController), handed to the host through dm_input_set and dm_pad_set_player (hle_hid.c, bit layout in dm_input.h).
 //   Two layouts, three in handheld mode; one tap on the layout button at the top centre (labelled with the current layout, "2D" / "3D" / "Tap") goes to the next, and the choice is kept in NSUserDefaults (each game is its own app, so per game); the first launch uses the game profile's pad_layout (DM_GAME_PAD_LAYOUT).
 //   DMTouchOnly packages select Tap in handheld mode even after a saved controller layout, and hide/disable its layout button.
-//   DMTabletPad packages use a fixed 3D layout on iPad with two visible sticks and controls beside the grip.
+//   DMTabletPad packages use a 3D layout on iPad with two visible sticks and controls beside the grip; Breath of the Wild 1.9.0 also offers its Action layout.
 //   Tap (touch): no control but the layout button in ordinary packages, every other touch goes to the game's touch screen; offered only while the game is in handheld mode, the only one in which it reads the touch screen (Balatro, played by touch).
 //   2D (simple): top corners ZL above L (one column), ZR above R likewise, teardrops with the tip toward the screen corner; − and + side by side at the top centre; the left stick in the bottom-left corner (fixed ring, tilt measured from the ring centre, small dead zone);
 //     the A (right) B (bottom) X (top) Y (left) diamond in the bottom-right corner, sliding a finger between keys switches keys. Each bottom corner holds a single control, so it sits close in (reaching halfway into the side safe-area inset).
@@ -26,6 +26,7 @@
 #include "game_profile.h"
 #include "TouchLayoutPolicy.h"
 #include "TabletPadLayout.h"
+#include "BotwActionPad.h"
 #include "haptics_apple.h"
 #include "motion_apple.h"
 #include "motion_fusion.h"
@@ -33,8 +34,8 @@
 #include "pad_slots.h"
 #include <stdatomic.h>
 
-enum { B_A = 0, B_B, B_X, B_Y, B_LS, B_RS, B_L, B_R, B_ZL, B_ZR, B_PLUS, B_MINUS, B_LEFT, B_UP, B_RIGHT, B_DOWN, B_N };
-enum { C_NONE = 0, C_STICK, C_DPAD, C_FACE, C_BTN, C_SWAP, C_GAME };   // which control a touch holds; C_GAME: none, the touch goes to the game's touch screen (finger slot << 8)
+enum { C_NONE = 0, C_STICK, C_DPAD, C_FACE, C_BTN, C_SWAP, C_GAME, C_ACTION };
+static NSString *const k_botw_layout_key = @"DmBotwPadLayout";
 
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_touch_btn, g_shake_btn;
@@ -155,6 +156,12 @@ static void pads_start(void);   // Physical controllers, below
     unsigned _hapticSticks;
     BOOL _stickShown;                              // a visible stick was held at the last refresh
     BOOL _tabletPad;                               // this package opts into the iPad layout
+    BOOL _hasActionPad, _actionPad;
+    DmActionInput _actionInput;
+    uint64_t _actionHeld;
+    CAShapeLayer *_actionKey[DM_ACTION_COUNT], *_actionBadge[DM_ACTION_COUNT];
+    CALayer *_actionIcon[DM_ACTION_COUNT];
+    CATextLayer *_actionLabel[DM_ACTION_COUNT], *_actionCycle[3];
     BOOL _preview;
     double _tabletSize, _tabletLift;
     BOOL _touchOnly;                              // explicit touch-only package policy
@@ -177,6 +184,30 @@ static CATextLayer *label(CALayer *parent, NSString *s) {
     [parent addSublayer:t]; return t;
 }
 static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   // keys shown only in the 3D layout
+static UIImage *actionIcon(NSString *name) {
+    if ([name isEqualToString:@"bow"]) {
+        return [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(38, 38)] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+            (void)ctx;
+            UIBezierPath *p = [UIBezierPath bezierPath];
+            [p moveToPoint:CGPointMake(7, 12)];
+            [p addQuadCurveToPoint:CGPointMake(26, 31) controlPoint:CGPointMake(31, 7)];
+            [p addLineToPoint:CGPointMake(11, 27)]; [p addLineToPoint:CGPointMake(7, 12)];
+            [p moveToPoint:CGPointMake(8, 30)]; [p addLineToPoint:CGPointMake(31, 7)];
+            [p moveToPoint:CGPointMake(24, 8)]; [p addLineToPoint:CGPointMake(31, 7)];
+            [p addLineToPoint:CGPointMake(30, 14)];
+            [UIColor.whiteColor setStroke]; p.lineWidth = 2.2; p.lineCapStyle = kCGLineCapRound; p.lineJoinStyle = kCGLineJoinRound; [p stroke];
+        }];
+    }
+    UIImage *symbol = [UIImage systemImageNamed:name withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:27 weight:UIImageSymbolWeightSemibold]];
+    if (!symbol) return nil;
+    symbol = [symbol imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+    return [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(38, 38)] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        (void)ctx;
+        CGFloat s = MIN(29 / symbol.size.width, 29 / symbol.size.height);
+        CGSize sz = CGSizeMake(symbol.size.width * s, symbol.size.height * s);
+        [symbol drawInRect:CGRectMake((38 - sz.width) / 2, (38 - sz.height) / 2, sz.width, sz.height)];
+    }];
+}
 
 - (instancetype)initWithFrame:(CGRect)f preview:(BOOL)preview {
     if ((self = [super initWithFrame:f])) {
@@ -200,6 +231,9 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
         self.userInteractionEnabled = !preview;
         _tabletPad = preview || (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad &&
                                  [NSBundle.mainBundle.infoDictionary[@"DMTabletPad"] boolValue]);
+        _hasActionPad = !preview && _tabletPad &&
+            [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"org.nxnative.01007ef00011e000.v190"];
+        _actionPad = _hasActionPad && [NSUserDefaults.standardUserDefaults boolForKey:k_botw_layout_key];
         const char *size = getenv("DM_TABLET_PAD_SIZE"), *lift = getenv("DM_TABLET_PAD_LIFT");
         _tabletSize = !preview && size ? atof(size) : 100;
         _tabletLift = !preview && lift ? atof(lift) : 0;
@@ -220,6 +254,32 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
             for (int i = 0; i < DM_TABLET_DIRECTIONS; i++) {
                 int b = k_tabletDirections[i];
                 _label[b] = label(_key[b], arrows[i]);
+            }
+        }
+        if (_hasActionPad) {
+            static NSString *const icons[DM_ACTION_COUNT] = {
+                @"sword", @"shield", @"eye", @"shield", @"eye", @"lock.fill", @"xmark",
+                @"map", @"figure.cooldown", @"bow", @"sword", @"figure.jumprope",
+                @"hand.raised.fill", @"figure.run", @"backpack.fill", @"scope", @"arrow.up.right.circle", @"speaker.wave.2",
+            };
+            static NSString *const fallback[DM_ACTION_COUNT] = {
+                @"⚔", @"◇", @"◉", @"◇", @"◉", @"▣", @"×", @"▤", @"⌄",
+                @"🏹", @"⚔", @"↟", @"✋", @"»", @"▣", @"⊙", @"↗", @"♪",
+            };
+            static NSString *const badges[B_N] = {
+                @"A", @"B", @"X", @"Y", @"L3", @"R3", @"L", @"R", @"ZL", @"ZR", @"+", @"−", @"←", @"↑", @"→", @"↓",
+            };
+            for (int i = 0; i < DM_ACTION_COUNT; i++) {
+                _actionKey[i] = shape(_controls);
+                UIImage *icon = actionIcon(icons[i]);
+                if (icon) {
+                    _actionIcon[i] = [CALayer layer]; _actionIcon[i].contents = (__bridge id)icon.CGImage;
+                    [_actionKey[i] addSublayer:_actionIcon[i]];
+                } else _actionIcon[i] = label(_actionKey[i], fallback[i]);
+                if (i < 3) _actionCycle[i] = label(_actionKey[i], @"↻");
+                _actionBadge[i] = shape(_actionKey[i]);
+                _actionBadge[i].fillColor = [UIColor colorWithWhite:0.12 alpha:0.93].CGColor;
+                _actionLabel[i] = label(_actionBadge[i], badges[dm_action_buttons[i].button]);
             }
         }
         _swap = shape(_controls); _swapLabel = label(_swap, @"");
@@ -246,17 +306,23 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
 }
 - (void)applyLayout {   // show / hide the controls for the current layout
     [CATransaction begin]; [CATransaction setDisableActions:YES];
-    for (int b = 0; b < B_N; b++) _key[b].hidden = _tap || (fullOnly(b) && !_full);
+    for (int b = 0; b < B_N; b++) _key[b].hidden = _actionPad || _tap || (fullOnly(b) && !_full);
+    for (int i = 0; i < DM_ACTION_COUNT; i++) _actionKey[i].hidden = !_actionPad;
     _ring.hidden = _knob.hidden = _tap;
-    _swap.hidden = _tabletPad || !dm_layout_switch_visible(_tap, _touchOnly);
-    _swapLabel.string = _tap ? @"Tap" : _full ? @"3D" : @"2D";
+    _swap.hidden = !_hasActionPad && (_tabletPad || !dm_layout_switch_visible(_tap, _touchOnly));
+    _swapLabel.string = _actionPad ? @"Action" : _tap ? @"Tap" : _full ? @"3D" : @"2D";
     [CATransaction commit];
 }
 - (void)nextLayout {   // 2D → 3D (→ Tap in handheld mode) → 2D: release every touch first (no key stays held), save, lay out again
     int l = _tap ? 0 : _full ? (dm_opmode() == 0 ? 2 : 0) : 1;
     [self reset];
-    _full = l == 1; _tap = l == 2;
-    [NSUserDefaults.standardUserDefaults setObject:@(l) forKey:k_layout_key];
+    if (_hasActionPad) {
+        _actionPad = !_actionPad;
+        [NSUserDefaults.standardUserDefaults setBool:_actionPad forKey:k_botw_layout_key];
+    } else {
+        _full = l == 1; _tap = l == 2;
+        [NSUserDefaults.standardUserDefaults setObject:@(l) forKey:k_layout_key];
+    }
     [self applyLayout]; [self setNeedsLayout];
 }
 
@@ -276,6 +342,29 @@ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   
     return _tabletPad ? [self tabletMetrics:self.safe].scale : MIN(self.bounds.size.height / 430.0, 1.3);
 }
 static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPointMake(right ? CGRectGetMaxX(s) - dx : CGRectGetMinX(s) + dx, y); }
+- (CGFloat)actionScale { CGRect s = self.safe; return dm_action_scale(s.size.width, s.size.height); }
+- (CGPoint)actionPoint:(BOOL)right x:(CGFloat)x y:(CGFloat)y {
+    CGRect s = self.safe; CGFloat scale = self.actionScale;
+    return side(s, right, x * scale, CGRectGetMidY(s) + y * scale);
+}
+- (CGPoint)actionLocal:(CGPoint)p right:(BOOL)right {
+    CGRect s = self.safe; CGFloat scale = self.actionScale;
+    if (scale <= 0) return CGPointMake(-1e6, -1e6);
+    return CGPointMake((right ? CGRectGetMaxX(s) - p.x : p.x - CGRectGetMinX(s)) / scale,
+                       (p.y - CGRectGetMidY(s)) / scale);
+}
+- (CGPoint)clampTabletStick:(CGPoint)p right:(BOOL)right {
+    if (_actionPad) {
+        CGPoint local = [self actionLocal:p right:right];
+        double x = local.x, y = local.y;
+        dm_action_stick_clamp(right, &x, &y);
+        return [self actionPoint:right x:x y:y];
+    }
+    CGPoint local = [self tabletLocal:p right:right];
+    double x = local.x, y = local.y;
+    dm_tablet_stick_clamp(&x, &y);
+    return [self tabletPoint:right x:x y:y];
+}
 - (CGPoint)tabletPoint:(BOOL)right x:(CGFloat)x y:(CGFloat)y {
     CGRect s = self.safe;
     DmTabletMetrics m = [self tabletMetrics:s];
@@ -296,12 +385,13 @@ static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPoint
 - (CGPoint)facePos:(int)b { CGPoint c = self.faceCenter; CGFloat g = self.faceGap;
     switch (b) { case B_A: return CGPointMake(c.x + g, c.y); case B_B: return CGPointMake(c.x, c.y + g); case B_X: return CGPointMake(c.x, c.y - g); default: return CGPointMake(c.x - g, c.y); } }
 - (CGPoint)stickCentre:(int)i {
+    if (_actionPad) return _stick[i] ? _floatingCentre[i] : [self actionPoint:i != 0 x:dm_action_stick_x(i) y:0];
     if (_tabletPad) return _stick[i] ? _floatingCentre[i] : [self tabletPoint:i != 0 x:DM_TABLET_STICK_X y:DM_TABLET_STICK_Y];
     if (i) return _floatingCentre[i];
     CGRect s = self.corner;
     return side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u);
 }
-- (CGFloat)stickR:(int)i { return (_tabletPad ? DM_TABLET_STICK_R : i ? K_RSTICK_R : K_STICK_R) * self.u; }
+- (CGFloat)stickR:(int)i { return _actionPad ? DM_ACTION_STICK_R * self.actionScale : (_tabletPad ? DM_TABLET_STICK_R : i ? K_RSTICK_R : K_STICK_R) * self.u; }
 - (BOOL)inRightArea:(CGPoint)p { CGRect b = self.bounds; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
 - (CGPoint)dpadCenter {
     if (_tabletPad) return [self tabletPoint:NO x:DM_TABLET_FACE_X y:DM_TABLET_FACE_Y];
@@ -326,7 +416,7 @@ static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
         w = DM_TABLET_MENU_W * u; h = DM_TABLET_MENU_H * u;
     }
     return CGRectMake(c.x - w / 2, c.y - h / 2, w, h); }
-- (CGPoint)swapCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + K_PILL_Y * self.u); }
+- (CGPoint)swapCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + (_hasActionPad ? 25 : K_PILL_Y * self.u)); }
 
 static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
 - (int)btnAt:(CGPoint)p {   // locked keys (tested on touch-down only, then locked)
@@ -339,7 +429,13 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         if (hit) return b; }
     return -1;
 }
-- (BOOL)inSwap:(CGPoint)p { return !_tabletPad && dm_layout_switch_visible(_tap, _touchOnly) && dist(p, self.swapCenter) <= K_SWAP_R * self.u * 1.6; }
+- (BOOL)inSwap:(CGPoint)p {
+    if (_hasActionPad) {
+        CGPoint c = self.swapCenter;
+        return fabs(p.x - c.x) <= 28 && fabs(p.y - c.y) <= 22;
+    }
+    return !_tabletPad && dm_layout_switch_visible(_tap, _touchOnly) && dist(p, self.swapCenter) <= K_SWAP_R * self.u * 1.6;
+}
 - (uint64_t)faceAt:(CGPoint)p {   // keys under the finger in the diamond (between two keys both count)
     uint64_t m = 0; CGFloat r = self.faceR * 1.25;
     for (int b = B_A; b <= B_Y; b++) if (dist(p, [self facePos:b]) <= r) m |= 1ull << b;
@@ -374,11 +470,20 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 // ---- Touch ----
 - (void)recompute {
     uint64_t face = 0; for (UITouch *t in _faceOf) face |= [_faceOf objectForKey:t].unsignedLongLongValue;
-    uint64_t btn = 0, dpad = 0; BOOL swap = NO;
+    uint64_t btn = 0, dpad = 0, action = 0; BOOL swap = NO;
     for (UITouch *t in _owner) { uint64_t v = [_owner objectForKey:t].unsignedLongLongValue; int c = (int)(v & 0xff);
         if (c == C_BTN) btn |= 1ull << (v >> 8);
         else if (c == C_DPAD) dpad |= [self dpadAt:[t locationInView:self]];
-        else if (c == C_SWAP) swap = YES; }
+        else if (c == C_SWAP) swap = YES;
+        else if (c == C_ACTION) {
+            int i = (int)(v >> 8);
+            if (i > DM_ACTION_RUNE_MENU && i != DM_ACTION_LOCK) {
+                btn |= UINT64_C(1) << dm_action_buttons[i].button;
+                action |= UINT64_C(1) << i;
+            }
+        }
+    }
+    if (_actionPad) btn |= dm_action_bits(_actionInput);
     int32_t ax[4] = {0};
     for (int i = 0; i < 2; i++) {
         CGPoint o = [self knobOffset:i]; CGFloat R = [self stickR:i], d = hypot(o.x, o.y), dz = R * K_DEAD;
@@ -386,14 +491,14 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         CGFloat m = fmin((d - dz) / (R * K_FULL - dz), 1) / d;   // outside the dead zone: 0 rising to full at the full-tilt radius
         ax[i * 2] = (int32_t)lrint(o.x * m * 32767); ax[i * 2 + 1] = (int32_t)lrint(-o.y * m * 32767);   // host: up is positive; rounded so full tilt is exactly 32767
     }
-    BOOL changed = face != _faceBits || dpad != _dpadBits || btn != _btnBits || swap != _swapHeld;
+    BOOL changed = face != _faceBits || dpad != _dpadBits || btn != _btnBits || swap != _swapHeld || action != _actionHeld;
     uint64_t pressed = (face | dpad | btn) & ~(_faceBits | _dpadBits | _btnBits);
     unsigned gripping = (_stick[0] ? 1u : 0) | (_stick[1] ? 2u : 0);
     if (pressed || (swap && !_swapHeld) || (gripping & ~_hapticSticks)) {
         [_touchFeedback impactOccurredWithIntensity:0.6]; [_touchFeedback prepare];
     }
     _hapticSticks = gripping;
-    _faceBits = face; _dpadBits = dpad; _btnBits = btn; _swapHeld = swap;
+    _faceBits = face; _dpadBits = dpad; _btnBits = btn; _swapHeld = swap; _actionHeld = action;
     pthread_mutex_lock(&g_mu);
     g_touch_btn = face | dpad | btn; g_touch_lx = ax[0]; g_touch_ly = ax[1]; g_touch_rx = ax[2]; g_touch_ry = ax[3];
     pthread_mutex_unlock(&g_mu);
@@ -424,37 +529,40 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     BOOL game = NO;
     for (UITouch *t in ts) {
         if (_padOff) { game |= [self gameBegin:t]; continue; }
-        CGPoint p = [t locationInView:self]; int hit = _tap ? -1 : [self btnAt:p];
+        CGPoint p = [t locationInView:self];
+        int idx = p.x >= CGRectGetMidX(self.safe);
+        CGPoint local = _actionPad ? [self actionLocal:p right:idx != 0] : CGPointZero;
+        int action = _actionPad ? dm_action_hit(idx, local.x, local.y) : -1;
+        if (action >= 0) { [_owner setObject:@(C_ACTION | (uint64_t)action << 8) forKey:t]; continue; }
+        int hit = (_tap || _actionPad) ? -1 : [self btnAt:p];
         if (hit >= 0) { [_owner setObject:@(C_BTN | (uint64_t)hit << 8) forKey:t]; continue; }
         if ([self inSwap:p]) { [_owner setObject:@(C_SWAP) forKey:t]; continue; }
         if (_tap) { game |= [self gameBegin:t]; continue; }
         // diamond, D-pad, left stick: take the one with the smallest distance / grab radius, if it is <= 1
-        CGFloat best = 1; int kind = C_NONE, idx = 0;
-        CGFloat f = dist(p, self.faceCenter) / (self.faceGap + self.faceR * 1.6); if (f <= best) { best = f; kind = C_FACE; }
-        if (_tabletPad) {
-            if ([self dpadAt:p]) kind = C_DPAD;
-        } else if (_full) {
-            CGFloat d = dist(p, self.dpadCenter) / (self.dpadR * K_DPAD_GRAB);
-            if (d < best) { best = d; kind = C_DPAD; }
+        CGFloat best = 1; int kind = C_NONE;
+        if (_actionPad) {
+            if (!_stick[idx] && dm_action_stick_contains(idx, local.x, local.y)) kind = C_STICK;
+        } else {
+            CGFloat f = dist(p, self.faceCenter) / (self.faceGap + self.faceR * 1.6); if (f <= best) { best = f; kind = C_FACE; }
+            if (_tabletPad) {
+                if ([self dpadAt:p]) kind = C_DPAD;
+            } else if (_full) {
+                CGFloat d = dist(p, self.dpadCenter) / (self.dpadR * K_DPAD_GRAB);
+                if (d < best) { best = d; kind = C_DPAD; }
+            }
+            if (_tabletPad && kind == C_NONE && self.u > 0) {
+                CGPoint tablet = [self tabletLocal:p right:idx != 0];
+                if (!_stick[idx] && dm_tablet_stick_contains(tablet.x, tablet.y)) kind = C_STICK;
+            }
         }
-        if (_tabletPad && kind == C_NONE && self.u > 0) {
-            idx = p.x >= CGRectGetMidX(self.safe);
-            CGPoint local = [self tabletLocal:p right:idx != 0];
-            if (!_stick[idx] && dm_tablet_stick_contains(local.x, local.y)) kind = C_STICK;
-        }
-        if (!_tabletPad && !_stick[0] && dist(p, [self stickCentre:0]) < best * [self stickR:0] * K_STICK_GRAB) kind = C_STICK;
+        if (!_tabletPad && !_stick[0] && dist(p, [self stickCentre:0]) < best * [self stickR:0] * K_STICK_GRAB) { kind = C_STICK; idx = 0; }
         if (!_tabletPad && kind == C_NONE && _full && !_stick[1] && [self inRightArea:p]) { kind = C_STICK; idx = 1; }
         if (kind == C_FACE) { [_owner setObject:@(C_FACE) forKey:t]; [_faceOf setObject:@([self faceAt:p]) forKey:t]; }
         else if (kind == C_DPAD) [_owner setObject:@(C_DPAD) forKey:t];
         else if (kind == C_STICK) {
             [_owner setObject:@(C_STICK | (uint64_t)idx << 8) forKey:t];
             CGPoint centre = p;
-            if (_tabletPad) {
-                CGPoint local = [self tabletLocal:p right:idx != 0];
-                double x = local.x, y = local.y;
-                dm_tablet_stick_clamp(&x, &y);
-                centre = [self tabletPoint:idx != 0 x:x y:y];
-            }
+            if (_tabletPad) centre = [self clampTabletStick:p right:idx != 0];
             _stickTouchOffset[idx] = CGPointMake(centre.x - p.x, centre.y - p.y);
             _stick[idx] = t; _stickNow[idx] = _floatingCentre[idx] = centre;
         }
@@ -477,12 +585,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
                 CGFloat d = dist(p, centre), r = [self stickR:i];
                 if (d > r) {
                     centre = CGPointMake(p.x - (p.x - centre.x) * r / d, p.y - (p.y - centre.y) * r / d);
-                    if (_tabletPad && self.u > 0) {
-                        CGPoint local = [self tabletLocal:centre right:i != 0];
-                        double x = local.x, y = local.y;
-                        dm_tablet_stick_clamp(&x, &y);
-                        centre = [self tabletPoint:i != 0 x:x y:y];
-                    }
+                    if (_tabletPad && self.u > 0) centre = [self clampTabletStick:centre right:i != 0];
                     _floatingCentre[i] = centre;
                 }
             }
@@ -497,6 +600,14 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     for (UITouch *t in ts) {
         uint64_t v = [_owner objectForKey:t].unsignedLongLongValue;
         if (ended && (v & 0xff) == C_SWAP && [self inSwap:[t locationInView:self]]) swap = YES;   // layout button: counts only when released on the button
+        if (ended && (v & 0xff) == C_ACTION) {
+            int i = (int)(v >> 8);
+            if (i <= DM_ACTION_RUNE_MENU || i == DM_ACTION_LOCK) {
+                BOOL right = dm_action_buttons[i].right;
+                CGPoint local = [self actionLocal:[t locationInView:self] right:right];
+                if (dm_action_hit(right, local.x, local.y) == i) dm_action_toggle(&_actionInput, i);
+            }
+        }
         if ((v & 0xff) == C_GAME && (v >> 8) < 16) { _game[v >> 8] = nil; game = YES; }
         [_owner removeObjectForKey:t]; [_faceOf removeObjectForKey:t]; for (int i = 0; i < 2; i++) if (t == _stick[i]) _stick[i] = nil;
     }
@@ -506,7 +617,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:YES]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e { [self endTouches:ts tapped:NO]; }
-- (void)reset { [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [self pushGame]; [self recompute]; }
+- (void)reset { dm_action_clear(&_actionInput); [_owner removeAllObjects]; [_faceOf removeAllObjects]; _stick[0] = _stick[1] = nil; for (int i = 0; i < 16; i++) _game[i] = nil; [self pushGame]; [self recompute]; }
 
 // ---- Shapes ----
 static CGPathRef circlePath(CGPoint c, CGFloat r) { return CGPathCreateWithEllipseInRect(CGRectMake(c.x - r, c.y - r, 2 * r, 2 * r), NULL); }
@@ -569,9 +680,31 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             setPath(_key[b], armPath(c, self.dpadR, K_ARM_W * u, K_ARM_IN * u, i * M_PI_2, 6 * u));
         }
     }
-    CGPoint sc = self.swapCenter; setPath(_swap, circlePath(sc, K_SWAP_R * u)); placeLabel(_swapLabel, sc, 12 * u);
+    CGPoint sc = self.swapCenter;
+    if (_hasActionPad) {
+        CGRect pill = CGRectMake(sc.x - 26, sc.y - 16, 52, 32);
+        setPath(_swap, CGPathCreateWithRoundedRect(pill, 16, 16, NULL)); placeLabel(_swapLabel, sc, 13);
+        _swapLabel.frame = CGRectInset(_swapLabel.frame, -7, 0);
+    } else {
+        setPath(_swap, circlePath(sc, K_SWAP_R * u)); placeLabel(_swapLabel, sc, 12 * u);
+    }
+    if (_actionPad) {
+        CGFloat scale = self.actionScale, r = DM_ACTION_RADIUS * scale;
+        for (int i = 0; i < DM_ACTION_COUNT; i++) {
+            DmActionButton b = dm_action_buttons[i];
+            CGPoint c = [self actionPoint:b.right x:b.x y:b.y];
+            setPath(_actionKey[i], circlePath(c, r));
+            if ([_actionIcon[i] isKindOfClass:CATextLayer.class]) placeLabel((CATextLayer *)_actionIcon[i], c, 18 * scale);
+            else _actionIcon[i].frame = CGRectMake(c.x - r * 0.84, c.y - r * 0.84, r * 1.68, r * 1.68);
+            if (i < 3) placeLabel(_actionCycle[i], CGPointMake(c.x - r * 0.57, c.y - r * 0.51), 12 * scale);
+            CGPoint tag = CGPointMake(c.x + r * 0.68, c.y - r * 0.72);
+            CGRect pill = CGRectMake(tag.x - 10 * scale, tag.y - 5.5 * scale, 20 * scale, 11 * scale);
+            setPath(_actionBadge[i], CGPathCreateWithRoundedRect(pill, 5.5 * scale, 5.5 * scale, NULL));
+            placeLabel(_actionLabel[i], tag, 9 * scale);
+        }
+    }
     if (!_tabletPad) setPath(_ring, circlePath([self stickCentre:0], [self stickR:0]));
-    CGFloat k = (_tabletPad ? DM_TABLET_KNOB_R : K_KNOB_R) * u;
+    CGFloat k = _actionPad ? DM_ACTION_KNOB_R * self.actionScale : (_tabletPad ? DM_TABLET_KNOB_R : K_KNOB_R) * u;
     _knob.bounds = CGRectMake(0, 0, 2 * k, 2 * k);
     setPath(_knob, circlePath(CGPointMake(k, k), k));
     if (_tabletPad) {
@@ -593,6 +726,14 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     for (int b = 0; b < B_N; b++) { BOOL on = (all >> b) & 1;
         _key[b].fillColor = (on ? k_on : k_idle).CGColor; _label[b].foregroundColor = (on ? k_textOn : k_text).CGColor; }
+    if (_actionPad) for (int i = 0; i < DM_ACTION_COUNT; i++) {
+        BOOL on = (_actionHeld >> i) & 1;
+        if (i <= DM_ACTION_RUNE_MENU) on = (_actionInput.menu >> dm_action_buttons[i].button) & 1;
+        else if (i == DM_ACTION_LOCK) on = _actionInput.lock;
+        UIColor *tint = i == DM_ACTION_LOCK ? UIColor.systemOrangeColor : UIColor.systemTealColor;
+        _actionKey[i].strokeColor = [tint colorWithAlphaComponent:on ? 1 : 0.75].CGColor;
+        _actionKey[i].fillColor = on ? [tint colorWithAlphaComponent:0.50].CGColor : k_idle.CGColor;
+    }
     _swap.fillColor = (_swapHeld ? k_on : k_idle).CGColor; _swapLabel.foregroundColor = (_swapHeld ? k_textOn : k_text).CGColor;
     CGPoint h = [self stickCentre:0], o = [self knobOffset:0];
     _knob.position = CGPointMake(h.x + o.x, h.y + o.y); _knob.fillColor = (_stick[0] ? k_on : k_idle).CGColor;

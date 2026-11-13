@@ -5,7 +5,7 @@ import subprocess
 import sys
 from build_cache_launcher import SOURCE
 
-TABLET_SOURCES = ('DmGamepad.m', 'TouchLayoutPolicy.h', 'TabletPadLayout.h',
+TABLET_SOURCES = ('DmGamepad.m', 'TouchLayoutPolicy.h', 'TabletPadLayout.h', 'BotwActionPad.h',
                   'DmIOS-Bridging-Header.h', 'Launcher.swift', 'TabletPadLauncher.swift')
 
 

@@ -49,7 +49,7 @@ jobs:
       - name: Check tablet touch geometry
         if: inputs.target == 'botw-tablet' || inputs.target == 'botw-190' || matrix.game == 'xenoblade2'
         working-directory: build-config
-        run: python -m unittest scripts.tests.test_touch_layout
+        run: python -m unittest scripts.tests.test_touch_layout scripts.tests.test_botw_action_pad
       - name: Test physical controller mapping
         if: inputs.target == 'botw-190' || matrix.game == 'xenoblade2'
         working-directory: build-config
@@ -105,7 +105,7 @@ jobs:
           for library in deswz present; do
             grep -Eq "k_host_msl_lib_${library}, [1-9][0-9]*}" "$header"
           done
-      - name: Verify compiled GPU work directory cleanup
+      - name: Verify compiled GPU cleanup and Action layout
         if: inputs.target == 'botw-190'
         run: |
           python - <<'PY'
@@ -115,7 +115,10 @@ jobs:
               root = 'Payload/DmIOS.app/'
               info = plistlib.loads(ipa.read(root + 'Info.plist'))
               assert info['CFBundleIdentifier'] == 'org.nxnative.01007ef00011e000.v190'
-              assert b'old Metal work directories from the game cache' in ipa.read(root + info['CFBundleExecutable'])
+              assert info['DMTabletPad'] is True and info['DTSDKName'] == 'iphoneos27.2'
+              exe = ipa.read(root + info['CFBundleExecutable'])
+              assert b'old Metal work directories from the game cache' in exe
+              assert b'DmBotwPadLayout\0' in exe
           PY
       - name: Encrypt updated IPA
         env:
