@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: seedds/nxnative
-          ref: cde88f62068e3d879b083b1a86a7fd78610c7b7b
+          ref: a0cad7e06a0821c52477ff20dbc53d6126748c54
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -38,18 +38,20 @@ jobs:
           dir=build-config/scripts/resonance_cache
           xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" "$dir/ShaderCacheTests.swift" -o "$RUNNER_TEMP/shader-cache-tests"
           "$RUNNER_TEMP/shader-cache-tests"
+      - name: Apply the iOS layout and external-data port
+        run: cp -R build-config/botw-upstream-overlay/. .
       - name: Test iPad touch layout
-        if: inputs.input_digest != ''
-        working-directory: build-config
-        run: python -m unittest scripts.tests.test_touch_layout
+        run: |
+          mkdir -p scripts/tests
+          cp build-config/scripts/tests/test_touch_layout.py build-config/scripts/tests/test_botw_action_pad.py scripts/tests/
+          python -m unittest scripts.tests.test_touch_layout scripts.tests.test_botw_action_pad
       - name: Install build tools
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
           brew install xcodegen zstd glslang
-          if ! dotnet --list-sdks | grep -q '^10\.'; then brew install dotnet@10; echo "$(brew --prefix dotnet@10)/bin" >> "$GITHUB_PATH"; fi
           if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
-          python -m pip install lz4 capstone fonttools cryptography requests
+          python -m pip install lz4 "capstone>=5,<6" fonttools cryptography requests nsz zbic
       - name: Restore authenticated linking inputs
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
@@ -66,7 +68,7 @@ jobs:
           digest=os.environ['INPUT_DIGEST']
           if digest:
               assert re.fullmatch('[0-9a-f]{64}', digest)
-              parts=sorted(Path('build-config/build-input-botw-190').rglob('part-*'))
+              parts=sorted(Path('build-config/build-input-botw-190-upstream').rglob('part-*'))
               assert parts, 'Missing encrypted 1.9.0 linking inputs'
               with path.open('wb') as stream:
                   for part in parts: stream.write(part.read_bytes())
@@ -78,11 +80,20 @@ jobs:
               with path.open('wb') as stream:
                   for part in parts: stream.write(part.read_bytes())
           transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
+          old=temp/'original-shader-input.enc'
+          source=Path('build-config/build-input-botw-190')
+          old_parts=sorted(source.rglob('part-*'))
+          if not old_parts:
+              raise ValueError('Missing authenticated shader source archive')
+          with old.open('wb') as stream:
+              for part in old_parts:
+                  stream.write(part.read_bytes())
+          transform(old,temp/'original-shader-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
           PY
       - name: Compile external launcher
         run: |
           set -euo pipefail
-          python -u build-config/scripts/resonance_cache/build_botw.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/launcher-input.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output"
+          python -u build-config/scripts/resonance_cache/build_botw_upstream.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/launcher-input.tar.xz" "$RUNNER_TEMP/original-shader-input.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output"
       - name: Report build diagnostics
         if: failure()
         run: |
