@@ -12,7 +12,7 @@ class BotwActionPad(unittest.TestCase):
         text = (SOURCE / "DmGamepad.m").read_text(encoding="utf-8")
         self.assertIn('#include "BotwActionPad.h"', text)
         self.assertIn('@"org.nxnative.01007ef00011e000.v190"', text)
-        self.assertIn('setBool:_actionPad forKey:k_botw_layout_key', text)
+        self.assertIn('setInteger:_botwLayout forKey:k_botw_layout_key', text)
         self.assertIn('dm_action_clear(&_actionInput)', text.split('- (void)reset {')[1])
         self.assertIn('dm_action_bits(_actionInput)', text)
         self.assertTrue('dm_action_route_sticks(_actionInput, ax)' in text)

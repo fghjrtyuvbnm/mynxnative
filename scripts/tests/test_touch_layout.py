@@ -3,10 +3,11 @@ from pathlib import Path
 import subprocess,tempfile,unittest
 REPO=Path(__file__).resolve().parents[2]
 class TouchLayout(unittest.TestCase):
-    def test_botw_3d_menu_uses_outer_edges(self):
+    def test_botw_classic_menu_uses_outer_edges(self):
         source = (REPO / 'dm/ios/Sources/DmGamepad.m').read_text(encoding='utf-8')
         menu = source.split('- (CGRect)pillRect:(int)b', 1)[1].split('- (CGPoint)swapCenter', 1)[0]
-        self.assertTrue('[self tabletPoint:b == B_PLUS x:dm_tablet_menu_x(_hasActionPad)' in menu)
+        self.assertIn('else if (_hasActionPad)', menu)
+        self.assertIn('side(s, b == B_PLUS, K_CLASSIC_MENU_X', menu)
 
     def test_physical_controller_hides_tablet_controls(self):
         source = (REPO / 'dm/ios/Sources/DmGamepad.m').read_text(encoding='utf-8')
@@ -34,13 +35,6 @@ static int fits(double width, double height) {
 }
 
 int main(void) {
-    double edge = dm_tablet_menu_x(1);
-    double hitRight = edge + DM_TABLET_MENU_W / 2 + DM_TABLET_EDGE_MENU_HIT_X;
-    if (edge <= DM_TABLET_MENU_W / 2 + DM_TABLET_EDGE_MENU_HIT_X || edge > 40) return 39;
-    if (dm_tablet_menu_x(0) != DM_TABLET_MENU_X) return 40;
-    if (DM_TABLET_EDGE_MENU_Y + DM_TABLET_MENU_H / 2 + 8 >= DM_TABLET_STICK_MIN_Y - DM_TABLET_STICK_R) return 41;
-    if (DM_TABLET_EDGE_MENU_Y - DM_TABLET_MENU_H / 2 - 8 <= DM_TABLET_FACE_Y + DM_TABLET_FACE_R * 1.35) return 42;
-    if (hitRight >= DM_TABLET_FACE_X - DM_TABLET_FACE_R * 1.35) return 43;
     if (fits(1133, 720)) return fits(1133, 720);
     if (fits(600, 420)) return fits(600, 420) + 10;
     if (DM_TABLET_FACE_R * dm_tablet_pad_scale(1133, 720) * 2 < 44) return 20;
@@ -104,6 +98,11 @@ int main(void) { return 30; } /* No tablet layout to render or hit-test. */
     def test_touch_only_start_and_hidden_switch(self):
         source='''#include "TouchLayoutPolicy.h"
 int main(void) {
+ if(dm_botw_next_layout(DM_BOTW_IPAD_3D)!=DM_BOTW_ACTION) return 16;
+ if(dm_botw_next_layout(DM_BOTW_ACTION)!=DM_BOTW_CLASSIC_3D) return 17;
+ if(dm_botw_next_layout(DM_BOTW_CLASSIC_3D)!=DM_BOTW_IPAD_3D) return 18;
+ if(dm_botw_saved_layout(0)!=DM_BOTW_IPAD_3D || dm_botw_saved_layout(1)!=DM_BOTW_ACTION) return 19;
+ if(dm_botw_saved_layout(2)!=DM_BOTW_CLASSIC_3D || dm_botw_saved_layout(4)!=DM_BOTW_IPAD_3D) return 20;
  if(dm_initial_pad_layout(2,0,1,1,1)!=2) return 10;
  if(dm_layout_switch_visible(1,1)!=0) return 11;
  if(dm_initial_pad_layout(0,1,1,1,0)!=1) return 12;
