@@ -64,7 +64,7 @@ def main(repo, archive, shader_archive, work, out):
         sample = ios/f'b-{CHAIN}'
         sample.mkdir(parents=True)
         (sample/'inputs.tsv').write_text(f'game\t{TITLE}\ninputs\t{fingerprint}\n')
-        (sample/'compile-check.metallib').write_bytes(b'compile-check')
+        (sample/'0000000000000000_b.metallib').write_bytes(b'compile-check')
         profile = repo/'dm/games'/TITLE
         for n in ('c1_full.tsv','cb_extent.tsv'):
             (profile/n).write_text(f'# chain b-{CHAIN} inputs {fingerprint} game {TITLE}\n')
