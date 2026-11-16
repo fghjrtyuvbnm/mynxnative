@@ -81,7 +81,7 @@ jobs:
                   for part in parts: stream.write(part.read_bytes())
           transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
           old=temp/'original-shader-input.enc'
-          source=Path('build-config/build-input-botw-190')
+          source=Path('build-config/build-input-botw-190-upstream-shaders')
           old_parts=sorted(source.rglob('part-*'))
           if not old_parts:
               raise ValueError('Missing authenticated shader source archive')
