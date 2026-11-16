@@ -24,6 +24,7 @@ def main(repo, archive, shader_archive, work, out):
     repo, archive, shader_archive, work, out = (Path(p).resolve() for p in (repo, archive, shader_archive, work, out))
     if subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip() != SOURCE:
         raise ValueError('Unexpected upstream source')
+    preflight = os.environ.get('BOTW_COMPILE_PREFLIGHT') == '1'
     work.mkdir()
     out.mkdir()
     with tarfile.open(archive) as stream:
@@ -56,8 +57,20 @@ def main(repo, archive, shader_archive, work, out):
     if f'# BUILD_ID\t{MAIN}\n' not in (patched/'main.fixups.tsv').read_text():
         raise ValueError('Unexpected rewritten executable')
     shader = work/'shader'
-    ios = build.build_shaders(Path(sys.executable), repo, shader,
-                              repo/'dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate', env, logs, game, pull=True)
+    if preflight:
+        fingerprint = subprocess.check_output([sys.executable,str(repo/'dm/gfx/tools/dmsh_chain.py'),'--inputs'],
+                                              env=env,text=True).strip()
+        ios = shader/'ios'
+        sample = ios/f'b-{CHAIN}'
+        sample.mkdir(parents=True)
+        (sample/'inputs.tsv').write_text(f'game\t{TITLE}\ninputs\t{fingerprint}\n')
+        (sample/'compile-check.metallib').write_bytes(b'compile-check')
+        profile = repo/'dm/games'/TITLE
+        for n in ('c1_full.tsv','cb_extent.tsv'):
+            (profile/n).write_text(f'# chain b-{CHAIN} inputs {fingerprint} game {TITLE}\n')
+    else:
+        ios = build.build_shaders(Path(sys.executable), repo, shader,
+                                  repo/'dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate', env, logs, game, pull=True)
     lib = build.shader_lib.view(ios/f'b-{CHAIN}')
     stamp = dict(line.split('\t',1) for line in (lib/'inputs.tsv').read_text().splitlines()
                  if line and not line.startswith('#'))
@@ -105,6 +118,9 @@ def main(repo, archive, shader_archive, work, out):
         'CODE_SIGNING_ALLOWED=NO','CODE_SIGNING_REQUIRED=NO','CODE_SIGN_IDENTITY=','DM_COPY_GAME_RESOURCES=NO',
         'DM_XCODE_OUTPUT_ROOT='+str(derived), 'SYMROOT='+str(derived/'Build/Products'),
         'OBJROOT='+str(derived/'Build/Intermediates.noindex'),'build')
+    if preflight:
+        print('iOS native compile preflight passed')
+        return
     ipa = out/'ZeldaBreathOfTheWild.ipa'
     skip = [item for n in ('_CodeSignature','embedded.mobileprovision','romfs','romfs.img','msl','aoc')
             for item in ('--skip',APP+n)]

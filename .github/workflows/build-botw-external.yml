@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: botw-external-ipa
+  group: botw-upstream-native-preflight
   cancel-in-progress: false
 jobs:
   launcher:
@@ -19,6 +19,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       HOMEBREW_NO_AUTO_UPDATE: '1'
+      BOTW_COMPILE_PREFLIGHT: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -125,18 +126,3 @@ jobs:
           path: ${{ runner.temp }}/botw-diagnostics.enc
           retention-days: 1
           compression-level: 0
-      - name: Encrypt unsigned IPA and shader pack
-        env:
-          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
-        run: |
-          set -euo pipefail
-          tar -cf "$RUNNER_TEMP/botw.tar" -C "$RUNNER_TEMP/output" ZeldaBreathOfTheWild.ipa game-data.json shaders.pack
-          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/botw.tar" "$RUNNER_TEMP/botw.enc"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: ZeldaBreathOfTheWild-encrypted-external-build
-          path: ${{ runner.temp }}/botw.enc
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-
