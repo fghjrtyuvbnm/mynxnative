@@ -42,6 +42,7 @@ def main(repo, archive, shader_archive, work, out):
         stream.extractall(work, members=packages, filter='data')
     logs = work/'logs'
     logs.mkdir()
+    (work/'tmp').mkdir()
     sys.path[:0] = [str(repo/'scripts'), str(repo/'dm/tools'), str(repo/'dm/games')]
     os.environ.update(GAME=TITLE, DM_GAME=TITLE)
     build = importlib.import_module('build_ipa_from_nsp')
