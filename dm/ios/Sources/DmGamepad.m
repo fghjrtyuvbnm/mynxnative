@@ -412,7 +412,8 @@ static BOOL isClick(int b) { return b == B_LS || b == B_RS; }
 - (CGRect)pillRect:(int)b { CGRect s = self.safe; CGFloat u = self.u, w = K_PILL_W * u, h = K_PILL_H * u;
     CGPoint c = CGPointMake(CGRectGetMidX(s) + (b == B_PLUS ? K_PILL_DX : -K_PILL_DX) * u, CGRectGetMinY(s) + K_PILL_Y * u);   // − on the left, + on the right
     if (_tabletPad) {
-        c = [self tabletPoint:b == B_PLUS x:DM_TABLET_MENU_X y:DM_TABLET_MENU_Y];
+        c = [self tabletPoint:b == B_PLUS x:dm_tablet_menu_x(_hasActionPad)
+                          y:_hasActionPad ? DM_TABLET_EDGE_MENU_Y : DM_TABLET_MENU_Y];
         w = DM_TABLET_MENU_W * u; h = DM_TABLET_MENU_H * u;
     }
     return CGRectMake(c.x - w / 2, c.y - h / 2, w, h); }
@@ -425,7 +426,7 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         if (fullOnly(b) && !_full) continue;
         BOOL hit = isDrop(b) ? dist(p, [self dropCenter:b]) <= [self dropR:b] * 1.35
                  : isClick(b) ? dist(p, [self clickCenter:b]) <= self.clickR * 1.35
-                 : CGRectContainsPoint(CGRectInset([self pillRect:b], -8 * u, -8 * u), p);
+                 : CGRectContainsPoint(CGRectInset([self pillRect:b], -(_hasActionPad ? DM_TABLET_EDGE_MENU_HIT_X : 8) * u, -8 * u), p);
         if (hit) return b; }
     return -1;
 }

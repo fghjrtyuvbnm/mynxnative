@@ -3,6 +3,11 @@ from pathlib import Path
 import subprocess,tempfile,unittest
 REPO=Path(__file__).resolve().parents[2]
 class TouchLayout(unittest.TestCase):
+    def test_botw_3d_menu_uses_outer_edges(self):
+        source = (REPO / 'dm/ios/Sources/DmGamepad.m').read_text(encoding='utf-8')
+        menu = source.split('- (CGRect)pillRect:(int)b', 1)[1].split('- (CGPoint)swapCenter', 1)[0]
+        self.assertTrue('[self tabletPoint:b == B_PLUS x:dm_tablet_menu_x(_hasActionPad)' in menu)
+
     def test_physical_controller_hides_tablet_controls(self):
         source = (REPO / 'dm/ios/Sources/DmGamepad.m').read_text(encoding='utf-8')
         update = source.split('- (void)padsChanged:(NSNotification *)note {', 1)[1].split('@end', 1)[0]
@@ -29,6 +34,13 @@ static int fits(double width, double height) {
 }
 
 int main(void) {
+    double edge = dm_tablet_menu_x(1);
+    double hitRight = edge + DM_TABLET_MENU_W / 2 + DM_TABLET_EDGE_MENU_HIT_X;
+    if (edge <= DM_TABLET_MENU_W / 2 + DM_TABLET_EDGE_MENU_HIT_X || edge > 40) return 39;
+    if (dm_tablet_menu_x(0) != DM_TABLET_MENU_X) return 40;
+    if (DM_TABLET_EDGE_MENU_Y + DM_TABLET_MENU_H / 2 + 8 >= DM_TABLET_STICK_MIN_Y - DM_TABLET_STICK_R) return 41;
+    if (DM_TABLET_EDGE_MENU_Y - DM_TABLET_MENU_H / 2 - 8 <= DM_TABLET_FACE_Y + DM_TABLET_FACE_R * 1.35) return 42;
+    if (hitRight >= DM_TABLET_FACE_X - DM_TABLET_FACE_R * 1.35) return 43;
     if (fits(1133, 720)) return fits(1133, 720);
     if (fits(600, 420)) return fits(600, 420) + 10;
     if (DM_TABLET_FACE_R * dm_tablet_pad_scale(1133, 720) * 2 < 44) return 20;
