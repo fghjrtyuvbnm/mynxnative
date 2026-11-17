@@ -1,15 +1,15 @@
-name: Build DiscoElysiumTheFinalCut external-data IPA
+name: Build Pokemon Legends Arceus external IPA
 on:
   workflow_dispatch:
     inputs:
       input_digest:
-        description: SHA-256 of the encrypted Disco Elysium build input
+        description: SHA-256 of the selected encrypted build input
         type: string
-        default: ''
+        required: true
 permissions:
   contents: read
 concurrency:
-  group: disco-external-ipa
+  group: arceus-111-external
   cancel-in-progress: false
 jobs:
   launcher:
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: seedds/nxnative
-          ref: e6a358f5c1311c5a320e749a7ce3ddfd60ae1c7b
+          ref: f3e53afe42c36ccc53883dfec94d22f27cf2348c
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -32,8 +32,8 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'
-      - name: Apply iOS external-data support
-        run: cp -R build-config/disco-overlay/. .
+      - name: Apply external-data support
+        run: cp -R build-config/arceus-overlay/. .
       - name: Install build tools
         run: |
           set -euo pipefail
@@ -48,26 +48,25 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, os, re, sys
+          import hashlib, os, shutil, sys
           from pathlib import Path
           sys.path.insert(0,'build-config/scripts')
           from ipa_crypto import transform
           temp=Path(os.environ['RUNNER_TEMP'])
-          path=temp/'launcher-input.enc'
-          digest=os.environ['INPUT_DIGEST']
-          assert re.fullmatch('[0-9a-f]{64}', digest)
-          parts=sorted(Path('build-config/build-input-disco-1013').glob('part-*'))
-          assert parts, 'Missing encrypted linking inputs'
-          with path.open('wb') as stream:
-              for part in parts: stream.write(part.read_bytes())
-          with path.open('rb') as stream:
-              assert hashlib.file_digest(stream,'sha256').hexdigest()==digest, 'Encrypted input digest mismatch'
-          transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
+          key=bytes.fromhex(os.environ['BUILD_CIPHER_KEY'])
+          inputs=Path('build-config/arceus-input')
+          archive=temp/'current.enc'
+          with archive.open('wb') as out:
+              for part in sorted(inputs.glob('part-*')):
+                  with part.open('rb') as source: shutil.copyfileobj(source,out)
+          with archive.open('rb') as stream:
+              assert hashlib.file_digest(stream,'sha256').hexdigest()==os.environ['INPUT_DIGEST']
+          transform(archive,temp/'current.tar.xz',key,True)
           PY
       - name: Compile external launcher
         run: |
           set -euo pipefail
-          python -u build-config/scripts/resonance_cache/build_disco.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/launcher-input.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output"
+          python -u build-config/scripts/resonance_cache/build-arceus.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/current.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output"
       - name: Report build diagnostics
         if: failure()
         run: |
@@ -86,17 +85,17 @@ jobs:
           sys.path.insert(0,'build-config/scripts')
           from ipa_crypto import transform
           temp=Path(os.environ['RUNNER_TEMP']); work=temp/'game'
-          with tarfile.open(temp/'disco-diagnostics.tar','w') as tar:
+          with tarfile.open(temp/'arceus-diagnostics.tar','w') as tar:
               for name in ('logs','profile'):
                   path=work/name
                   if path.exists(): tar.add(path,name)
-          transform(temp/'disco-diagnostics.tar',temp/'disco-diagnostics.enc',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']))
+          transform(temp/'arceus-diagnostics.tar',temp/'arceus-diagnostics.enc',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']))
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: DiscoElysiumTheFinalCut-encrypted-diagnostics
-          path: ${{ runner.temp }}/disco-diagnostics.enc
+          name: arceus-encrypted-diagnostics
+          path: ${{ runner.temp }}/arceus-diagnostics.enc
           retention-days: 1
           compression-level: 0
       - name: Encrypt unsigned IPA and shader pack
@@ -104,12 +103,12 @@ jobs:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
         run: |
           set -euo pipefail
-          tar -cf "$RUNNER_TEMP/disco.tar" -C "$RUNNER_TEMP/output" DiscoElysiumTheFinalCut.ipa game-data.json shaders.pack
-          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/disco.tar" "$RUNNER_TEMP/disco.enc"
+          tar -cf "$RUNNER_TEMP/arceus.tar" -C "$RUNNER_TEMP/output" PokemonLegendsArceus.ipa game-data.json shaders.pack
+          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/arceus.tar" "$RUNNER_TEMP/arceus.enc"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: DiscoElysiumTheFinalCut-encrypted-external-build
-          path: ${{ runner.temp }}/disco.enc
+          name: arceus-encrypted-external-build
+          path: ${{ runner.temp }}/arceus.enc
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
