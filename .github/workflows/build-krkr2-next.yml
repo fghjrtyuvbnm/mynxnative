@@ -1,0 +1,100 @@
+name: Build KrKr2 Next for iPad
+on:
+  push:
+    branches: ['codex/krkr2-next-ios-build']
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_COMMIT: 1abd1ed4e8aec7abd5d2524c3a9ad7886880602f
+  VCPKG_DISABLE_METRICS: '1'
+  VCPKG_MAX_CONCURRENCY: '4'
+  JOBS: '4'
+  COCOAPODS_DISABLE_STATS: 'true'
+
+jobs:
+  ios:
+    runs-on: xcode-27
+    timeout-minutes: 105
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: reAAAq/KrKr2-Next
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+
+      - name: Prepare Xcode, Flutter and vcpkg
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          for app in /Applications/Xcode_27.2*.app; do
+            if [ -d "$app/Contents/Developer" ]; then
+              sudo xcode-select -s "$app/Contents/Developer"
+              break
+            fi
+          done
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          for tool in bash ninja cmake cocoapods; do
+            if ! brew list --versions "$tool" >/dev/null; then brew install "$tool"; fi
+          done
+          git clone --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          printf '%s\n' "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics --no-enable-swift-package-manager
+          "$RUNNER_TEMP/flutter/bin/flutter" --version
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+          test -f vcpkg-configuration.json
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: krkr2next-ios27-vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+
+      - name: Compile the engine and Flutter app
+        run: /opt/homebrew/bin/bash build/build_ios.sh release
+
+      - name: Collect dependency logs if compilation fails
+        if: failure()
+        shell: bash
+        run: |
+          find "$VCPKG_ROOT/buildtrees" -name '*-err.log' -size +0c -exec sh -c 'echo "$1"; tail -n 30 "$1"' _ {} \; || true
+
+      - name: Verify arm64 and package the unsigned IPA
+        run: |
+          app=apps/flutter_app/build/ios/iphoneos/Runner.app
+          test -f "$app/Info.plist"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")
+          xcrun lipo -verify_arch arm64 "$app/$executable"
+          xcrun vtool -show-build "$app/$executable"
+          test -f "$app/Frameworks/App.framework/App"
+          test -f "$app/Frameworks/Flutter.framework/Flutter"
+          mkdir -p package/Payload
+          ditto "$app" package/Payload/KrKr2Next.app
+          cp LICENSE package/Payload/KrKr2Next.app/LICENSE.txt
+          cd package
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          p = plistlib.loads(Path('Payload/KrKr2Next.app/Info.plist').read_bytes())
+          assert 2 in p['UIDeviceFamily'], p['UIDeviceFamily']
+          assert int(p['MinimumOSVersion'].split('.')[0]) <= 27
+          for k in ('CFBundleIdentifier', 'CFBundleShortVersionString', 'MinimumOSVersion', 'UIDeviceFamily'):
+              print(f'{k}: {p[k]}')
+          PY
+          zip -qry KrKr2Next-1.0.0-source-unsigned.ipa Payload
+          unzip -tq KrKr2Next-1.0.0-source-unsigned.ipa
+          shasum -a 256 KrKr2Next-1.0.0-source-unsigned.ipa > KrKr2Next-1.0.0-source-unsigned.sha256
+          printf '%s\n' "$SOURCE_COMMIT" > SOURCE_COMMIT.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KrKr2Next-1.0.0-source-unsigned
+          path: |
+            package/KrKr2Next-1.0.0-source-unsigned.ipa
+            package/KrKr2Next-1.0.0-source-unsigned.sha256
+            package/SOURCE_COMMIT.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 5
