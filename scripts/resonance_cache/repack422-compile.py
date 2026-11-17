@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import plistlib
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -22,6 +23,27 @@ GAMES={
 def rows(path):
     return [line.split(chr(9),4) for line in path.read_text().splitlines()
             if line and not line.startswith(('#','package'+chr(9)))]
+
+def validate_shader_packages(shader, expected):
+    import shader_split
+    groups={}
+    for name,index,stage,key,_ in expected:
+        groups.setdefault(name,{})[int(index)]=key
+    for name, entries in groups.items():
+        path=shader/'pkg'/name
+        with path.open('rb') as stream:
+            records=stream.read().split(b'BTCDBTCD')
+        assert records.pop(0)==b'' and len(records)==len(entries)
+        updated=path.with_suffix('.pending')
+        with updated.open('wb') as out:
+            for index,record in enumerate(records):
+                key=entries[index]
+                ctl_size,code_size=struct.unpack_from('<2I',record,0x20)
+                code,ctl=record[0x30:0x30+code_size],record[0x30+code_size:]
+                assert len(ctl)==ctl_size and shader_split.skey(ctl,code)==key
+                assert record[:8] in (bytes(8),bytes.fromhex(key))
+                out.write(b'BTCDBTCD'+bytes.fromhex(key)+record[8:])
+        updated.replace(path)
 
 def main(repo, archive, original, work, out, name):
     repo, archive, original, work, out=(Path(p).resolve() for p in (repo,archive,original,work,out))
@@ -44,7 +66,7 @@ def main(repo, archive, original, work, out, name):
         shutil.copytree(old/'pkg',shader/'pkg')
         shutil.copyfile(old/'pso_pairs.tsv',shader/'pso_pairs.tsv')
     os.environ.update(GAME=title,DM_GAME=title)
-    sys.path[:0]=[str(repo/p) for p in ('scripts','dm/tools','dm/games')]
+    sys.path[:0]=[str(repo/p) for p in ('scripts','dm/tools','dm/games','dm/gfx/tools')]
     build=importlib.import_module('build_ipa_from_nsp')
     g=importlib.import_module('game').load(title)
     build.PROG.mode='lines'; build.PROG.plan(3)
@@ -54,6 +76,7 @@ def main(repo, archive, original, work, out, name):
     assert build.chain_of(repo)==CHAIN
     patched=work/f'patched_{version}'
     assert main_build in (patched/'main.fixups.tsv').read_text()
+    validate_shader_packages(shader,rows(profile/'shader_map.tsv'))
     ios=build.build_shaders(Path(sys.executable),repo,shader,repo/'dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate',env,logs,g,pull=True)
     lib=build.shader_lib.view(ios/f'b-{CHAIN}')
     stamp=dict(line.split(chr(9),1) for line in (lib/'inputs.tsv').read_text().splitlines() if line and not line.startswith('#'))
