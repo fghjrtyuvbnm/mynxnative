@@ -1,0 +1,122 @@
+name: Build Octopath Traveler II external IPA
+on:
+  workflow_dispatch:
+    inputs:
+      input_digest:
+        description: SHA-256 of the selected encrypted build input
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: octopath-111-bb574c70
+  cancel-in-progress: false
+jobs:
+  launcher:
+    if: github.event.repository.private == false
+    runs-on: xcode-27
+    timeout-minutes: 300
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: seedds/nxnative
+          ref: bb574c70f1499d34f9d2e40a018f2284d57e96bc
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: build-config
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.14'
+      - name: Apply external-data support
+        run: cp -R build-config/octopath-upgrade-overlay/. .
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          brew install xcodegen zstd glslang
+          if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
+          python -m pip install lz4 "capstone>=5,<6" fonttools cryptography requests nsz zbic
+      - name: Restore authenticated linking inputs
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+          INPUT_DIGEST: ${{ inputs.input_digest }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, os, shutil, sys
+          from pathlib import Path
+          sys.path.insert(0,'build-config/scripts')
+          from ipa_crypto import transform
+          temp=Path(os.environ['RUNNER_TEMP'])
+          key=bytes.fromhex(os.environ['BUILD_CIPHER_KEY'])
+          inputs=Path('build-config/octopath-upgrade-input')
+          archive=temp/'current.enc'
+          with archive.open('wb') as out:
+              for part in sorted(inputs.glob('part-*')):
+                  with part.open('rb') as source: shutil.copyfileobj(source,out)
+          with archive.open('rb') as stream:
+              assert hashlib.file_digest(stream,'sha256').hexdigest()==os.environ['INPUT_DIGEST']
+          transform(archive,temp/'current.tar.xz',key,True)
+          old=temp/'original.enc'
+          parts=sorted(Path('build-config/build-input-octopath-ii').rglob('part-*'))
+          assert parts
+          with old.open('wb') as out:
+              for part in parts:
+                  with part.open('rb') as source: shutil.copyfileobj(source,out)
+          transform(old,temp/'old.tar.xz',key,True)
+          PY
+      - name: Compile external launcher
+        run: |
+          set -euo pipefail
+          python -u build-config/scripts/resonance_cache/build-octopath-upgrade.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/current.tar.xz" "$RUNNER_TEMP/old.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output" octopath
+      - name: Report build diagnostics
+        if: failure()
+        run: |
+          for name in mac_host_make mac_host_build heap_check dmsh_build; do
+            path="$RUNNER_TEMP/game/logs/$name.log"
+            if [ -f "$path" ]; then tail -40 "$path"; fi
+          done
+      - name: Encrypt build diagnostics
+        if: always()
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          python - <<'PY'
+          import os, tarfile, sys
+          from pathlib import Path
+          sys.path.insert(0,'build-config/scripts')
+          from ipa_crypto import transform
+          temp=Path(os.environ['RUNNER_TEMP']); work=temp/'game'
+          with tarfile.open(temp/'octopath-diagnostics.tar','w') as tar:
+              for name in ('logs','profile'):
+                  path=work/name
+                  if path.exists(): tar.add(path,name)
+          transform(temp/'octopath-diagnostics.tar',temp/'octopath-diagnostics.enc',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']))
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: octopath-encrypted-diagnostics
+          path: ${{ runner.temp }}/octopath-diagnostics.enc
+          retention-days: 1
+          compression-level: 0
+      - name: Encrypt unsigned IPA and shader pack
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          set -euo pipefail
+          tar -cf "$RUNNER_TEMP/octopath.tar" -C "$RUNNER_TEMP/output" OctopathTravelerII.ipa game-data.json shaders.pack
+          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/octopath.tar" "$RUNNER_TEMP/octopath.enc"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: octopath-encrypted-external-build
+          path: ${{ runner.temp }}/octopath.enc
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
