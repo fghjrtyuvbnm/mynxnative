@@ -41,6 +41,22 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
           dotnet --info
 
+      - name: Restore the original LibHac package from the Ryujinx feed
+        shell: bash
+        working-directory: melonx
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          config = Path('nuget.config')
+          xml = config.read_bytes()
+          previous = b'https://starforgejo.dev/api/packages/Ryulynx/nuget/index.json'
+          assert xml.count(previous) == 1
+          config.write_bytes(xml.replace(previous, b'https://git.ryujinx.app/api/packages/projects/nuget/index.json'))
+          PY
+          dotnet restore src/Ryujinx.Library -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER -p:SelfContained=true
+          test -d "$HOME/.nuget/packages/ryujinx.libhac/0.21.0-alpha.129"
+
       - name: Archive unsigned app for physical iPads
         shell: bash
         working-directory: melonx
