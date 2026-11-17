@@ -16,15 +16,18 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 65
     steps:
-      - name: Fetch the official source archive
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify and unpack the official source snapshot
         shell: bash
         run: |
-          curl --fail --show-error --silent --location --retry 3 --connect-timeout 12 --max-time 90             -o "$RUNNER_TEMP/MeloNX-source.tar.gz"             "https://starforgejo.dev/api/v1/repos/projects/MeloNX/archive/${MELO_COMMIT}.tar.gz"
+          echo "83fe24daa81880a7e6b43506f5df3195e509f25834531b2ac0f6721b0e254871  MeloNX-13700519.tar.gz" | shasum -a 256 --check
           mkdir melonx
-          tar -xzf "$RUNNER_TEMP/MeloNX-source.tar.gz" -C melonx --strip-components=1
+          tar -xzf MeloNX-13700519.tar.gz -C melonx --strip-components=1
           test -f melonx/global.json
           test -f melonx/src/MeloNX/MeloNX.xcodeproj/project.pbxproj
-          test ! -f melonx/.gitmodules
 
       - uses: actions/setup-dotnet@v4
         with:
