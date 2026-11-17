@@ -13,7 +13,7 @@ env:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,15 @@ jobs:
         shell: bash
         run: |
           sudo ln -sf "$(command -v dotnet)" /usr/local/bin/dotnet
+          for candidate in /Applications/Xcode_27.2*.app; do
+            if [ -d "$candidate/Contents/Developer" ]; then
+              sudo xcode-select -s "$candidate/Contents/Developer"
+              break
+            fi
+          done
           xcodebuild -version
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          test "${sdk%%.*}" -ge 27
           xcrun --sdk iphoneos --show-sdk-version
           dotnet --info
 
@@ -56,6 +64,21 @@ jobs:
           PY
           dotnet restore src/Ryujinx.Library -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER -p:SelfContained=true
           test -d "$HOME/.nuget/packages/ryujinx.libhac/0.21.0-alpha.129"
+
+      - name: Give EmulationView an explicit game initializer
+        shell: bash
+        working-directory: melonx
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          view = Path('src/MeloNX/MeloNX/UI/Emulation/EmulationView.swift')
+          swift = view.read_text()
+          needle = '    var game: GameInfo\n'
+          assert swift.count(needle) == 1
+          initializer = '\n    init(game: GameInfo) {\n        self.game = game\n    }\n'
+          view.write_text(swift.replace(needle, needle + initializer, 1))
+          PY
 
       - name: Archive unsigned app for physical iPads
         shell: bash
