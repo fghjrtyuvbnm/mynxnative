@@ -1,15 +1,20 @@
-name: Build ZeldaBreathOfTheWild external-data IPA
+name: Build Fire Emblem and Triangle Strategy external IPAs
 on:
   workflow_dispatch:
     inputs:
       input_digest:
-        description: SHA-256 of the encrypted 1.9.0 input (empty uses the original 1.6.0 input)
+        description: SHA-256 of the selected encrypted build input
         type: string
-        default: ''
+        required: true
+      game:
+        description: Game to build
+        type: choice
+        options: [three-houses, triangle]
+        required: true
 permissions:
   contents: read
 concurrency:
-  group: botw-external-ipa
+  group: tactical-422ec240-${{ inputs.game }}
   cancel-in-progress: false
 jobs:
   launcher:
@@ -23,7 +28,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: seedds/nxnative
-          ref: a0cad7e06a0821c52477ff20dbc53d6126748c54
+          ref: 422ec2409500da4637294b8b0ab0811755f214d4
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -32,19 +37,8 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'
-      - name: Test shader cache recovery and reuse
-        run: |
-          set -euo pipefail
-          dir=build-config/scripts/resonance_cache
-          xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" "$dir/ShaderCacheTests.swift" -o "$RUNNER_TEMP/shader-cache-tests"
-          "$RUNNER_TEMP/shader-cache-tests"
-      - name: Apply the iOS layout and external-data port
-        run: cp -R build-config/botw-upstream-overlay/. .
-      - name: Test iPad touch layout
-        run: |
-          mkdir -p scripts/tests
-          cp build-config/scripts/tests/test_touch_layout.py build-config/scripts/tests/test_botw_action_pad.py scripts/tests/
-          python -m unittest scripts.tests.test_touch_layout scripts.tests.test_botw_action_pad
+      - name: Apply external-data support
+        run: cp -R build-config/tactical-422-overlay/. .
       - name: Install build tools
         run: |
           set -euo pipefail
@@ -56,44 +50,41 @@ jobs:
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
           INPUT_DIGEST: ${{ inputs.input_digest }}
+          BUILD_GAME: ${{ inputs.game }}
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, os, re, sys
+          import hashlib, os, shutil, sys
           from pathlib import Path
           sys.path.insert(0,'build-config/scripts')
           from ipa_crypto import transform
+          game=os.environ['BUILD_GAME']
+          assert game in ('three-houses','triangle')
           temp=Path(os.environ['RUNNER_TEMP'])
-          path=temp/'launcher-input.enc'
-          digest=os.environ['INPUT_DIGEST']
-          if digest:
-              assert re.fullmatch('[0-9a-f]{64}', digest)
-              parts=sorted(Path('build-config/build-input-botw-190-upstream').rglob('part-*'))
-              assert parts, 'Missing encrypted 1.9.0 linking inputs'
-              with path.open('wb') as stream:
-                  for part in parts: stream.write(part.read_bytes())
-              with path.open('rb') as stream:
-                  assert hashlib.file_digest(stream,'sha256').hexdigest()==digest, 'Encrypted input digest mismatch'
-          else:
-              parts=sorted(Path('build-config/build-input-botw').rglob('part-*'))
-              assert parts, 'Missing encrypted linking inputs'
-              with path.open('wb') as stream:
-                  for part in parts: stream.write(part.read_bytes())
-          transform(path,temp/'launcher-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
-          old=temp/'original-shader-input.enc'
-          source=Path('build-config/build-input-botw-190-upstream-shaders')
-          old_parts=sorted(source.rglob('part-*'))
-          if not old_parts:
-              raise ValueError('Missing authenticated shader source archive')
-          with old.open('wb') as stream:
-              for part in old_parts:
-                  stream.write(part.read_bytes())
-          transform(old,temp/'original-shader-input.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
+          key=bytes.fromhex(os.environ['BUILD_CIPHER_KEY'])
+          inputs=Path('build-config/tactical-422-input')/game
+          archive=temp/'current.enc'
+          with archive.open('wb') as out:
+              for part in sorted(inputs.glob('part-*')):
+                  with part.open('rb') as source: shutil.copyfileobj(source,out)
+          with archive.open('rb') as stream:
+              assert hashlib.file_digest(stream,'sha256').hexdigest()==os.environ['INPUT_DIGEST']
+          transform(archive,temp/'current.tar.xz',key,True)
+          if game=='triangle':
+              old=temp/'original.enc'
+              parts=sorted(Path('build-config/build-input-triangle').rglob('part-*'))
+              assert parts
+              with old.open('wb') as out:
+                  for part in parts:
+                      with part.open('rb') as source: shutil.copyfileobj(source,out)
+              transform(old,temp/'old.tar.xz',key,True)
           PY
       - name: Compile external launcher
+        env:
+          BUILD_GAME: ${{ inputs.game }}
         run: |
           set -euo pipefail
-          python -u build-config/scripts/resonance_cache/build_botw_upstream.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/launcher-input.tar.xz" "$RUNNER_TEMP/original-shader-input.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output"
+          python -u build-config/scripts/resonance_cache/repack422-compile.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/current.tar.xz" "$RUNNER_TEMP/old.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output" "$BUILD_GAME"
       - name: Report build diagnostics
         if: failure()
         run: |
@@ -112,17 +103,17 @@ jobs:
           sys.path.insert(0,'build-config/scripts')
           from ipa_crypto import transform
           temp=Path(os.environ['RUNNER_TEMP']); work=temp/'game'
-          with tarfile.open(temp/'botw-diagnostics.tar','w') as tar:
+          with tarfile.open(temp/'tactical-diagnostics.tar','w') as tar:
               for name in ('logs','profile'):
                   path=work/name
                   if path.exists(): tar.add(path,name)
-          transform(temp/'botw-diagnostics.tar',temp/'botw-diagnostics.enc',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']))
+          transform(temp/'tactical-diagnostics.tar',temp/'tactical-diagnostics.enc',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']))
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: ZeldaBreathOfTheWild-encrypted-diagnostics
-          path: ${{ runner.temp }}/botw-diagnostics.enc
+          name: tactical-encrypted-diagnostics
+          path: ${{ runner.temp }}/tactical-diagnostics.enc
           retention-days: 1
           compression-level: 0
       - name: Encrypt unsigned IPA and shader pack
@@ -130,12 +121,12 @@ jobs:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
         run: |
           set -euo pipefail
-          tar -cf "$RUNNER_TEMP/botw.tar" -C "$RUNNER_TEMP/output" ZeldaBreathOfTheWild.ipa game-data.json shaders.pack
-          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/botw.tar" "$RUNNER_TEMP/botw.enc"
+          tar -cf "$RUNNER_TEMP/tactical.tar" -C "$RUNNER_TEMP/output" game.ipa game-data.json shaders.pack
+          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/tactical.tar" "$RUNNER_TEMP/tactical.enc"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: ZeldaBreathOfTheWild-encrypted-external-build
-          path: ${{ runner.temp }}/botw.enc
+          name: tactical-encrypted-external-build
+          path: ${{ runner.temp }}/tactical.enc
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
