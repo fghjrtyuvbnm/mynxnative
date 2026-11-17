@@ -11,8 +11,8 @@ import sys
 import tarfile
 import zipfile
 
-SOURCE = 'a0cad7e06a0821c52477ff20dbc53d6126748c54'
-CHAIN = '9c1a9324c032'
+SOURCE = '422ec2409500da4637294b8b0ab0811755f214d4'
+CHAIN = '13b3bdb97e7e'
 TITLE = '01007EF00011E000'
 MAIN = 'cd57b23fa4bbad65803d9788c01821ee'
 APP = 'Payload/DmIOS.app/'
@@ -64,7 +64,7 @@ def main(repo, archive, shader_archive, work, out):
     manifest = {
         'format_version': 1,
         'identity': dict(title_id=TITLE, main_build=MAIN, shader_chain=CHAIN, shader_inputs=stamp['inputs']),
-        'files': json.loads((work/'game-assets.json').read_text()),
+        'files': json.loads(Path(__file__).with_name('botw-lite-assets.json').read_text()),
     }
     with (out/'shaders.pack').open('xb') as stream:
         stream.write(b'FFRSMSL1')
@@ -96,10 +96,16 @@ def main(repo, archive, shader_archive, work, out):
                 DMShaderCacheManifest=hashlib.sha256(raw).hexdigest(), LSSupportsOpeningDocumentsInPlace=True,
                 UIFileSharingEnabled=True)
     plist.write_bytes(plistlib.dumps(info))
-    rows = {r['env']:r for r in json.loads((project/'Gen/dm/launcher.json').read_text())['settings']}
-    for name, wanted in (('DM_FPS_TARGET','30'), ('DM_OPMODE','0'), ('DM_PHONE_MOTION','1'), ('DM_PAD_SWAP_FACE','0')):
-        if rows[name]['default'] != wanted:
-            raise ValueError(f'Unexpected default for {name}')
+    settings_path = project/'Gen/dm/launcher.json'
+    settings = json.loads(settings_path.read_text())
+    rows = {r['env']:r for r in settings['settings']}
+    defaults = {'DM_RENDER_SCALE':'1.0','DM_OPMODE':'0','DM_SCREEN_ASPECT':'0','DM_PICTURE_FIT':'fit',
+                'DM_FPS_TARGET':'30','DM_PRESENT_UPSCALE':'off','DM_PHONE_MOTION':'1','DM_PAD_SWAP_FACE':'0'}
+    assert rows['DM_RENDER_SCALE']['base']['handheld']==[1280,720]
+    for name, value in defaults.items():
+        rows[name]['default'] = value
+    rows['DM_LANG']['options'] = [v for v in rows['DM_LANG']['options'] if v[0] in {'zh-Hans','zh-Hant','ja','en-US','en-GB'}]
+    settings_path.write_text(json.dumps(settings,separators=(',',':')))
     run('xcodebuild','-project',project/'DmIOS.xcodeproj','-scheme',f'{DISPLAY} ({TITLE})',
         '-configuration','Release','-destination','generic/platform=iOS','-derivedDataPath',derived,
         'CODE_SIGNING_ALLOWED=NO','CODE_SIGNING_REQUIRED=NO','CODE_SIGN_IDENTITY=','DM_COPY_GAME_RESOURCES=NO',

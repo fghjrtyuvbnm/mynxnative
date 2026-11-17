@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: botw-external-ipa
+  group: botw-422ec240
   cancel-in-progress: false
 jobs:
   launcher:
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: seedds/nxnative
-          ref: a0cad7e06a0821c52477ff20dbc53d6126748c54
+          ref: 422ec2409500da4637294b8b0ab0811755f214d4
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
