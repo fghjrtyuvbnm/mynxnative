@@ -16,22 +16,15 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 65
     steps:
-      - name: Fetch the official 2.7 tag
+      - name: Fetch the official source archive
         shell: bash
         run: |
-          git init melonx
-          git -C melonx remote add origin https://starforgejo.dev/projects/MeloNX.git
-          for attempt in 1 2 3; do
-            if git -C melonx -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=35 fetch --depth=1 origin refs/tags/2.7; then
-              break
-            fi
-            if [ "$attempt" = 3 ]; then exit 1; fi
-          done
-          test "$(git -C melonx rev-parse 'FETCH_HEAD^{commit}')" = "$MELO_COMMIT"
-          git -C melonx checkout --detach "$MELO_COMMIT"
-          if [ -f melonx/.gitmodules ]; then
-            git -C melonx submodule update --init --recursive --depth=1
-          fi
+          curl --fail --show-error --silent --location --retry 3 --connect-timeout 12 --max-time 90             -o "$RUNNER_TEMP/MeloNX-source.tar.gz"             "https://starforgejo.dev/api/v1/repos/projects/MeloNX/archive/${MELO_COMMIT}.tar.gz"
+          mkdir melonx
+          tar -xzf "$RUNNER_TEMP/MeloNX-source.tar.gz" -C melonx --strip-components=1
+          test -f melonx/global.json
+          test -f melonx/src/MeloNX/MeloNX.xcodeproj/project.pbxproj
+          test ! -f melonx/.gitmodules
 
       - uses: actions/setup-dotnet@v4
         with:
