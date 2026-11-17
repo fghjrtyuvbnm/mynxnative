@@ -35,7 +35,7 @@ jobs:
           done
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-          for tool in bash ninja cmake cocoapods; do
+          for tool in bash ninja cmake cocoapods autoconf automake autoconf-archive libtool; do
             if ! brew list --versions "$tool" >/dev/null; then brew install "$tool"; fi
           done
           git clone --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
@@ -47,10 +47,11 @@ jobs:
           echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
           test -f vcpkg-configuration.json
 
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/vcpkg/archives
-          key: krkr2next-ios27-vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg/**') }}
+          key: krkr2next-ios27-vcpkg-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: krkr2next-ios27-vcpkg-
 
       - name: Compile the engine and Flutter app
         run: /opt/homebrew/bin/bash build/build_ios.sh release
@@ -60,6 +61,13 @@ jobs:
         shell: bash
         run: |
           find "$VCPKG_ROOT/buildtrees" -name '*-err.log' -size +0c -exec sh -c 'echo "$1"; tail -n 30 "$1"' _ {} \; || true
+
+      - uses: actions/cache/save@v4
+        if: always()
+        continue-on-error: true
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: krkr2next-ios27-vcpkg-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify arm64 and package the unsigned IPA
         run: |
@@ -98,3 +106,4 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 5
+
