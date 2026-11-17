@@ -5,7 +5,6 @@ import importlib
 import os
 from pathlib import Path
 import plistlib
-import shutil
 import struct
 import subprocess
 import sys
@@ -48,7 +47,7 @@ def validate_shader_packages(shader, expected):
         updated.replace(path)
 
 def main(repo, archive, work, out):
-    repo, archive, work, out=(Path(p).resolve() for p in (repo,archive,original,work,out))
+    repo, archive, work, out=(Path(p).resolve() for p in (repo,archive,work,out))
     assert subprocess.check_output(['git','-C',repo,'rev-parse','HEAD'],text=True).strip()==SOURCE
     title, version, display_version, main_build, display, marker, lang=(TITLE, VERSION, DISPLAY_VERSION, MAIN, DISPLAY, MARKER, 'zh-Hans')
     work.mkdir()
