@@ -53,6 +53,25 @@ jobs:
           key: krkr2next-ios27-vcpkg-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: krkr2next-ios27-vcpkg-
 
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: ci-config
+          persist-credentials: false
+
+      - name: Prepare official Cubism SDK for iOS
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/sdk-crypto"
+          "$RUNNER_TEMP/sdk-crypto/bin/pip" -q install cryptography
+          cat ci-config/cubism-input/part-* > "$RUNNER_TEMP/cubism-ios.enc"
+          echo "e82eecfa10f3019cd5c3e8e282be3f9d94344b6bda0a22951c77942039057982  $RUNNER_TEMP/cubism-ios.enc" | shasum -a 256 --check
+          "$RUNNER_TEMP/sdk-crypto/bin/python" ci-config/ci/ipa_crypto.py decrypt "$RUNNER_TEMP/cubism-ios.enc" "$RUNNER_TEMP/cubism-ios.tar.gz"
+          tar -xzf "$RUNNER_TEMP/cubism-ios.tar.gz" -C cpp/plugins/cubism
+          python3 ci-config/ci/patch_sdk.py
+          xcrun lipo -verify_arch arm64 cpp/plugins/cubism/Core/lib/ios/Release-iphoneos/libLive2DCubismCore.a
+
       - name: Compile the engine and Flutter app
         run: /opt/homebrew/bin/bash build/build_ios.sh release
 
@@ -81,6 +100,7 @@ jobs:
           mkdir -p package/Payload
           ditto "$app" package/Payload/KrKr2Next.app
           cp LICENSE package/Payload/KrKr2Next.app/LICENSE.txt
+          ditto cpp/plugins/cubism/Licenses package/Payload/KrKr2Next.app/CubismLicenses
           cd package
           python3 - <<'PY'
           import plistlib
