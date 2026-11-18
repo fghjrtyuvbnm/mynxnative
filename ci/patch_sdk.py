@@ -18,7 +18,7 @@ for path in framework.rglob('*'):
     source = source.replace('<OpenGLES/ES2/glext.h>','<GLES2/gl2ext.h>')
     path.write_text(source,encoding='utf-8')
 
-shaders = sorted((framework/'Rendering/OpenGL/Shaders').glob('*'))
+shaders = sorted((framework/'Rendering/OpenGL/Shaders/StandardES').glob('*'))
 shaders = [p for p in shaders if p.suffix in ('.frag','.vert')]
 assert shaders, 'Missing R5 shader assets'
 header = sdk/'EmbeddedCubismShaders.hpp'
@@ -63,3 +63,4 @@ merge = root/'out/ios/release/cubism-core'
 merge.mkdir(parents=True,exist_ok=True)
 shutil.copyfile(core,merge/core.name)
 print('Prepared R5 ANGLE backend,',len(shaders),'embedded shaders and iOS Core archive')
+
