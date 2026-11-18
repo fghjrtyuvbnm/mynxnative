@@ -35,7 +35,7 @@ jobs:
           done
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-          for tool in bash ninja cmake cocoapods autoconf automake autoconf-archive libtool bison; do
+          for tool in bash ninja cmake cocoapods autoconf automake autoconf-archive libtool bison ccache; do
             if ! brew list --versions "$tool" >/dev/null; then brew install "$tool"; fi
           done
           git clone --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
@@ -51,7 +51,9 @@ jobs:
 
       - uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/vcpkg/archives
+          path: |
+            ~/.cache/vcpkg/archives
+            ~/.cache/ccache
           key: krkr2next-ios27-vcpkg-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: krkr2next-ios27-vcpkg-
 
@@ -87,7 +89,9 @@ jobs:
         if: always()
         continue-on-error: true
         with:
-          path: ~/.cache/vcpkg/archives
+          path: |
+            ~/.cache/vcpkg/archives
+            ~/.cache/ccache
           key: krkr2next-ios27-vcpkg-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify arm64 and package the unsigned IPA

@@ -70,3 +70,9 @@ merge.mkdir(parents=True,exist_ok=True)
 shutil.copyfile(core,merge/core.name)
 print('Prepared R5 ANGLE backend,',len(shaders),'embedded shaders and iOS Core archive')
 
+
+cmake = root/'cpp/plugins/CMakeLists.txt'
+text = cmake.read_text(encoding='utf-8')
+needle = 'PUBLIC CSM_TARGET_ANGLE_ES2)'
+assert text.count(needle) == 2
+cmake.write_text(text.replace(needle, 'PUBLIC CSM_TARGET_ANGLE_ES2 GL_GLEXT_PROTOTYPES)'), encoding='utf-8')
