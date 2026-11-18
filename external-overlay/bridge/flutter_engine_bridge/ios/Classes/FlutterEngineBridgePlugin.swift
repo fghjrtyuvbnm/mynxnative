@@ -194,7 +194,7 @@ public class FlutterEngineBridgePlugin: NSObject, FlutterPlugin {
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "pickExternalGameDirectory":
-      externalDirectories.pick(from: registrar.viewController(), result: result)
+      externalDirectories.pick(from: registrar.viewController, result: result)
     case "restoreExternalGameDirectories":
       externalDirectories.restore(call.arguments as? [String] ?? [], result: result)
     case "activateExternalGameDirectory", "forgetExternalGameDirectory":
@@ -416,3 +416,4 @@ public class FlutterEngineBridgePlugin: NSObject, FlutterPlugin {
     }
   }
 }
+
