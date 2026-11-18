@@ -76,3 +76,49 @@ text = cmake.read_text(encoding='utf-8')
 needle = 'PUBLIC CSM_TARGET_ANGLE_ES2)'
 assert text.count(needle) == 2
 cmake.write_text(text.replace(needle, 'PUBLIC CSM_TARGET_ANGLE_ES2 GL_GLEXT_PROTOTYPES)'), encoding='utf-8')
+
+model_header = framework/'Model/CubismModel.hpp'
+header = model_header.read_text(encoding='utf-8')
+needle = '    Core::csmModel*     _model;'
+assert header.count(needle) == 1
+header = header.replace(needle, '    csmVector<csmBool> _drawableForceHidden;\n' + needle)
+needle = 'public:\n'
+assert needle in header
+api = '''    // The host can hide selected meshes without modifying Core's flags.
+    void ClearDrawableForceHiddenFlags() { _drawableForceHidden.Clear(); }
+
+    void SetDrawableForceHidden(csmInt32 index, csmBool hidden)
+    {
+        const csmInt32 count = GetDrawableCount();
+        if (index < 0 || index >= count) return;
+        if (_drawableForceHidden.GetSize() != static_cast<csmUint32>(count))
+            _drawableForceHidden.Resize(count, false);
+        _drawableForceHidden[index] = hidden;
+    }
+
+'''
+start = header.index('class CubismModel\n')
+before, after = header[:start], header[start:]
+after = after.replace(needle, needle + api, 1)
+model_header.write_text(before + after, encoding='utf-8')
+model_source = framework/'Model/CubismModel.cpp'
+source = model_source.read_text(encoding='utf-8')
+needle = 'csmBool CubismModel::GetDrawableDynamicFlagIsVisible(csmInt32 drawableIndex) const\n{'
+assert source.count(needle) == 1
+source = source.replace(needle, needle + '''
+    if (drawableIndex >= 0
+        && static_cast<csmUint32>(drawableIndex) < _drawableForceHidden.GetSize()
+        && _drawableForceHidden[drawableIndex])
+        return false;
+''')
+model_source.write_text(source, encoding='utf-8')
+
+build = root/'build/build_ios.sh'
+script = build.read_text(encoding='utf-8')
+needle = '# Merge project libs into libengine_project.a'
+assert script.count(needle) == 1
+script = script.replace(needle, '''# CubismFramework uses private sources and must be merged explicitly.
+PROJECT_LIBS+=("$CMAKE_BUILD_DIR/cpp/plugins/libCubismFramework.a")
+
+''' + needle)
+build.write_text(script, encoding='utf-8')
