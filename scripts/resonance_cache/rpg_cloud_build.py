@@ -20,6 +20,10 @@ def main(repo, archive, work, out):
     assert subprocess.check_output(['git','-C',repo,'rev-parse','HEAD'],text=True).strip()==state['source_commit']
     profile=repo/'dm/games'/title
     shutil.copytree(work/'profile'/title,profile,dirs_exist_ok=True)
+    # Derived profiles with no conflict rulings still need the required table header.
+    conflicts=profile/'shader_map.tsv.conflicts.tsv'
+    if not conflicts.exists():
+        conflicts.write_text('# kind: evidence  control-section key conflict rulings: empty\ndm_ctl_sha16\tchosen_pc\tclass\tcandidates\trecords\n')
     os.environ.update(GAME=title,DM_GAME=title)
     sys.path[:0]=[str(repo/p) for p in ('scripts','dm/tools','dm/games','dm/gfx/tools')]
     build=importlib.import_module('build_ipa_from_nsp')
