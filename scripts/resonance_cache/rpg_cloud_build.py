@@ -17,6 +17,15 @@ def main(repo, archive, work, out):
     with tarfile.open(archive) as tar: tar.extractall(work,filter='data')
     state=json.loads((work/'build-state.json').read_bytes())
     title,version,chain=state['title'],state['version'],state['chain']
+    # The first local Trails split used Windows' CP936 default for its TSV header.
+    # Normalize those captured tables before the UTF-8-only Apple build reads them.
+    if state['key']=='trails':
+        for folder in (work/'shader',work/'profile'/title):
+            for table in folder.glob('*.tsv'):
+                raw=table.read_bytes()
+                try: raw.decode('utf-8')
+                except UnicodeDecodeError:
+                    table.write_text(raw.decode('cp936'),encoding='utf-8')
     assert subprocess.check_output(['git','-C',repo,'rev-parse','HEAD'],text=True).strip()==state['source_commit']
     profile=repo/'dm/games'/title
     shutil.copytree(work/'profile'/title,profile,dirs_exist_ok=True)
