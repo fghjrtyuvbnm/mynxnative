@@ -33,6 +33,7 @@ class _HomePageState extends State<HomePage> {
   final GameManager _gameManager = GameManager();
   bool _loading = true;
   String? _iosGamesDir;
+  bool _resolvingExternalGame = false;
   // On Android/iOS the engine is always built-in; EngineMode switching is
   // only meaningful on desktop platforms.
   EngineMode _engineMode = EngineMode.builtIn;
@@ -641,7 +642,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _launchGame(GameInfo game) async {
+    if (_resolvingExternalGame) return;
     if (Platform.isIOS && game.externalDirectoryId != null) {
+      _resolvingExternalGame = true;
       try {
         final restored = await ExternalGameStorage.activate(game.externalDirectoryId!);
         if (!mounted) return;
@@ -652,6 +655,8 @@ class _HomePageState extends State<HomePage> {
           SnackBar(content: Text(AppLocalizations.of(context)!.externalStorageUnavailable)),
         );
         return;
+      } finally {
+        _resolvingExternalGame = false;
       }
     }
     if (!mounted) return;
