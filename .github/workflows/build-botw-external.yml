@@ -85,11 +85,10 @@ jobs:
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
         run: |
-          tar -cf "$RUNNER_TEMP/output.tar" -C "$RUNNER_TEMP/output" game.ipa shaders.pack game-data.json
-          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/output.tar" "$RUNNER_TEMP/output.enc"
+          python build-config/scripts/resonance_cache/rpg_encrypt_outputs.py "$RUNNER_TEMP/output" "$RUNNER_TEMP/output-encrypted"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rpg-encrypted-build
-          path: ${{ runner.temp }}/output.enc
+          path: ${{ runner.temp }}/output-encrypted/*.enc
           retention-days: 2
           compression-level: 0
