@@ -56,6 +56,12 @@ swift = swift.replace(needle,needle+'\n#include "cubism/EmbeddedCubismShaders.hp
 needle = '    CubismFramework::Option opt;'
 assert swift.count(needle)==1
 swift = swift.replace(needle,needle+'\n    opt.LoadFileFunction = LoadCubismShader;\n    opt.ReleaseBytesFunction = ReleaseCubismShader;')
+needle = '        CreateRenderer();'
+assert swift.count(needle) == 1
+swift = swift.replace(needle, """        const auto canvasWidth = GetModel()->GetCanvasWidthPixel();
+        const auto canvasHeight = GetModel()->GetCanvasHeightPixel();
+        CreateRenderer(canvasWidth > 0 ? static_cast<csmUint32>(canvasWidth) : 1920,
+                       canvasHeight > 0 ? static_cast<csmUint32>(canvasHeight) : 1080);""")
 plugin.write_text(swift,encoding='utf-8')
 core = sdk/'Core/lib/ios/Release-iphoneos/libLive2DCubismCore.a'
 assert core.read_bytes().startswith(b'!<arch>\n')

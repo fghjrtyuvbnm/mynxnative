@@ -35,7 +35,7 @@ jobs:
           done
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-          for tool in bash ninja cmake cocoapods autoconf automake autoconf-archive libtool; do
+          for tool in bash ninja cmake cocoapods autoconf automake autoconf-archive libtool bison; do
             if ! brew list --versions "$tool" >/dev/null; then brew install "$tool"; fi
           done
           git clone --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
@@ -45,6 +45,8 @@ jobs:
           git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
           echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+          echo "/opt/homebrew/opt/bison/bin" >> "$GITHUB_PATH"
+          /opt/homebrew/opt/bison/bin/bison --version
           test -f vcpkg-configuration.json
 
       - uses: actions/cache/restore@v4
