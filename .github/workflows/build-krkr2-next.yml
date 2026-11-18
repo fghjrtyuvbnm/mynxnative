@@ -76,6 +76,31 @@ jobs:
           python3 ci-config/ci/patch_sdk.py
           xcrun lipo -verify_arch arm64 cpp/plugins/cubism/Core/lib/ios/Release-iphoneos/libLive2DCubismCore.a
 
+      - name: Reproduce missing external-directory persistence
+        run: |
+          cp ci-config/external-overlay/apps/flutter_app/test/external_storage_test.dart apps/flutter_app/test/
+          cd apps/flutter_app
+          flutter pub get
+          if flutter test test/external_storage_test.dart --reporter expanded > "$RUNNER_TEMP/external-baseline.log" 2>&1; then
+            cat "$RUNNER_TEMP/external-baseline.log"
+            echo "::error::The baseline unexpectedly passed"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/external-baseline.log"
+          grep -F "Expected: 'persistent-folder-id'" "$RUNNER_TEMP/external-baseline.log"
+          grep -F "Actual: <null>" "$RUNNER_TEMP/external-baseline.log"
+          grep -F "Some tests failed" "$RUNNER_TEMP/external-baseline.log"
+
+      - name: Apply external storage support and run regression tests
+        run: |
+          rsync -a ci-config/external-overlay/ ./
+          cd apps/flutter_app
+          flutter pub get
+          flutter gen-l10n
+          dart format lib/services/external_game_storage.dart test/external_storage_test.dart test/external_game_storage_channel_test.dart
+          flutter analyze --no-fatal-infos --no-fatal-warnings lib/models/game_info.dart lib/services/game_manager.dart lib/services/external_game_storage.dart lib/pages/home_page.dart
+          flutter test test/external_storage_test.dart test/external_game_storage_channel_test.dart --reporter expanded
+
       - name: Compile the engine and Flutter app
         run: /opt/homebrew/bin/bash build/build_ios.sh release
 
@@ -117,17 +142,17 @@ jobs:
           for k in ('CFBundleIdentifier', 'CFBundleShortVersionString', 'MinimumOSVersion', 'UIDeviceFamily'):
               print(f'{k}: {p[k]}')
           PY
-          zip -qry KrKr2Next-1.0.0-source-unsigned.ipa Payload
-          unzip -tq KrKr2Next-1.0.0-source-unsigned.ipa
-          shasum -a 256 KrKr2Next-1.0.0-source-unsigned.ipa > KrKr2Next-1.0.0-source-unsigned.sha256
+          zip -qry KrKr2Next-1.0.0-external-source-unsigned.ipa Payload
+          unzip -tq KrKr2Next-1.0.0-external-source-unsigned.ipa
+          shasum -a 256 KrKr2Next-1.0.0-external-source-unsigned.ipa > KrKr2Next-1.0.0-external-source-unsigned.sha256
           printf '%s\n' "$SOURCE_COMMIT" > SOURCE_COMMIT.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: KrKr2Next-1.0.0-source-unsigned
+          name: KrKr2Next-1.0.0-external-source-unsigned
           path: |
-            package/KrKr2Next-1.0.0-source-unsigned.ipa
-            package/KrKr2Next-1.0.0-source-unsigned.sha256
+            package/KrKr2Next-1.0.0-external-source-unsigned.ipa
+            package/KrKr2Next-1.0.0-external-source-unsigned.sha256
             package/SOURCE_COMMIT.txt
           if-no-files-found: error
           compression-level: 0
