@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: botw-422ec240
+  group: botw-20261120
   cancel-in-progress: false
 jobs:
   launcher:
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: seedds/nxnative
-          ref: 422ec2409500da4637294b8b0ab0811755f214d4
+          ref: ee998ae6d73d5960671ec837ea2ae4a8a0489fec
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -130,12 +130,11 @@ jobs:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
         run: |
           set -euo pipefail
-          tar -cf "$RUNNER_TEMP/botw.tar" -C "$RUNNER_TEMP/output" ZeldaBreathOfTheWild.ipa game-data.json shaders.pack
-          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/botw.tar" "$RUNNER_TEMP/botw.enc"
+          python build-config/scripts/resonance_cache/seal_botw.py "$RUNNER_TEMP/output" "$RUNNER_TEMP/sealed"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ZeldaBreathOfTheWild-encrypted-external-build
-          path: ${{ runner.temp }}/botw.enc
+          path: ${{ runner.temp }}/sealed/*.enc
           if-no-files-found: error
           compression-level: 0
           retention-days: 1

@@ -11,8 +11,8 @@ import sys
 import tarfile
 import zipfile
 
-SOURCE = '422ec2409500da4637294b8b0ab0811755f214d4'
-CHAIN = '13b3bdb97e7e'
+SOURCE = 'ee998ae6d73d5960671ec837ea2ae4a8a0489fec'
+CHAIN = '0724088d3779'
 TITLE = '01007EF00011E000'
 MAIN = 'cd57b23fa4bbad65803d9788c01821ee'
 APP = 'Payload/DmIOS.app/'
@@ -32,14 +32,12 @@ def main(repo, archive, shader_archive, work, out):
         path = f'profile/{TITLE}/shader_map.tsv'
         previous_map = stream.extractfile(path).read().decode('utf-8')
         current_map = (repo/'dm/games'/TITLE/'shader_map.tsv').read_text()
-        def rows(text):
-            return [line for line in text.splitlines() if line and not line.startswith(('#','package\t'))]
-        if rows(previous_map) != rows(current_map):
-            raise ValueError('The authenticated shader sources use a different upstream map')
         packages = [entry for entry in stream if entry.isfile() and entry.name.startswith('shader/pkg/')]
-        if not packages:
-            raise ValueError('Missing shader source packages')
+        if not packages: raise ValueError('Missing authenticated shader packages')
         stream.extractall(work, members=packages, filter='data')
+    sys.path.insert(0,str(repo/'dm/gfx/tools'))
+    from botw_shader_remap import remap
+    remap(work/'shader', previous_map, current_map)
     logs = work/'logs'
     logs.mkdir()
     (work/'tmp').mkdir()
@@ -102,9 +100,8 @@ def main(repo, archive, shader_archive, work, out):
     defaults = {'DM_RENDER_SCALE':'1.0','DM_OPMODE':'0','DM_SCREEN_ASPECT':'0','DM_PICTURE_FIT':'fit',
                 'DM_FPS_TARGET':'30','DM_PRESENT_UPSCALE':'off','DM_PHONE_MOTION':'1','DM_PAD_SWAP_FACE':'0'}
     assert rows['DM_RENDER_SCALE']['base']['handheld']==[1280,720]
-    for name, value in defaults.items():
-        rows[name]['default'] = value
-    rows['DM_LANG']['options'] = [v for v in rows['DM_LANG']['options'] if v[0] in {'zh-Hans','zh-Hant','ja','en-US','en-GB'}]
+    for name,value in defaults.items(): rows[name]['default']=value
+    rows['DM_LANG']['options']=[v for v in rows['DM_LANG']['options'] if v[0] in {'zh-Hans','zh-Hant','ja','en-US','en-GB'}]
     settings_path.write_text(json.dumps(settings,separators=(',',':')))
     run('xcodebuild','-project',project/'DmIOS.xcodeproj','-scheme',f'{DISPLAY} ({TITLE})',
         '-configuration','Release','-destination','generic/platform=iOS','-derivedDataPath',derived,
