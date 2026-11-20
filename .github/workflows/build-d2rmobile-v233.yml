@@ -1,0 +1,128 @@
+name: Build D2R Mobile v2.3.3 for iOS
+on:
+  push:
+    branches: [codex/d2rmobile-v233-20261120]
+    paths:
+      - .github/workflows/build-d2rmobile-v233.yml
+      - scripts/ipa_crypto.py
+permissions:
+  contents: read
+concurrency:
+  group: d2rmobile-v233
+  cancel-in-progress: false
+env:
+  TOOLS_COMMIT: 1013e9ec280e961fcf1d4a3c3dbf985114206a77
+  UPSTREAM_COMMIT: 4a938fe4446a94ab3dbc4a187ad72c6254013470
+  SOURCE_REPOSITORY: jhaizhou-ops/d2r-mobile
+  INPUT_REVISION: 135e4154fe754efd9c0fc0585d7e7fa8cbae10725e50fc4d65ea361c3ebcbd31
+  PREPARED_INPUT: '{"url":"https://github.com/jiayx/d2r-mobile-build/releases/download/ios-shader-refresh-v1-2ac64814c30e1227d8f09f75d42f6d4e832b2a9965fd1739d78aef7fdb184e73/D2RMobile-Prepared.zip","sha256":"0abe98add320a85dbd1a0168da4ca9ccb5c4f3e1baec688828da9f12d715958a"}'
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: build-config
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: jiayx/d2r-mobile-build
+          ref: ${{ env.TOOLS_COMMIT }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: jhaizhou-ops/d2r-mobile
+          ref: ${{ env.UPSTREAM_COMMIT }}
+          fetch-depth: 0
+          path: tools/upstream
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: Prepare and verify the pinned game payload
+        working-directory: tools
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt pillow==12.1.1 numpy==2.4.4 cryptography==46.0.7
+          python -m unittest discover -s tests -p test_prepared.py
+          python -m unittest discover -s tests -p test_source_selection.py
+          python -m unittest discover -s tests -p test_prepared_cleanup.py
+          python scripts/source/configure.py
+          python scripts/source/prepared.py download
+          bash scripts/png_backend.sh
+          LD_PRELOAD="$PWD/.tools/png-zlib-ng-2.3.2/lib/libz.so.1" python scripts/source/prepared.py prepare
+      - name: Encrypt native build inputs
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          set -euo pipefail
+          tar -cf "$RUNNER_TEMP/native.tar" -C tools/outputs native-inputs.tar.gz source-payload.zip source-input-report.json build-context.json
+          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/native.tar" "$RUNNER_TEMP/native.enc"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: D2RMobile-v233-encrypted-input
+          path: ${{ runner.temp }}/native.enc
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+  native:
+    needs: prepare
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: build-config
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: jiayx/d2r-mobile-build
+          ref: ${{ env.TOOLS_COMMIT }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: D2RMobile-v233-encrypted-input
+          path: ${{ runner.temp }}
+      - name: Restore build inputs
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          set -euo pipefail
+          python -m pip install PyYAML==6.0.2 cryptography==46.0.7
+          python build-config/scripts/ipa_crypto.py decrypt "$RUNNER_TEMP/native.enc" "$RUNNER_TEMP/native.tar"
+          mkdir -p tools/outputs
+          tar -xf "$RUNNER_TEMP/native.tar" -C tools/outputs
+          tar -xzf tools/outputs/native-inputs.tar.gz -C tools
+      - name: Build with the iOS 27 SDK
+        working-directory: tools
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          [[ "$sdk" == 27.2 ]]
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          python scripts/source/build.py 26.0
+      - name: Encrypt the IPA and build report
+        env:
+          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
+        run: |
+          set -euo pipefail
+          tar -cf "$RUNNER_TEMP/result.tar" -C tools/outputs "$(basename tools/outputs/D2RMobile-*.ipa)" source-report.json
+          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/result.tar" "$RUNNER_TEMP/result.enc"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: D2RMobile-v233-encrypted-IPA
+          path: ${{ runner.temp }}/result.enc
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
