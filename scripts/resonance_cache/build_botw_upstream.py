@@ -35,7 +35,8 @@ def main(repo, archive, shader_archive, work, out):
         packages = [entry for entry in stream if entry.isfile() and entry.name.startswith('shader/pkg/')]
         if not packages: raise ValueError('Missing authenticated shader packages')
         stream.extractall(work, members=packages, filter='data')
-    sys.path.insert(0,str(repo/'dm/gfx/tools'))
+    os.environ.update(GAME=TITLE, DM_GAME=TITLE)
+    sys.path[:0]=[str(repo/'dm/gfx/tools'),str(repo/'dm/tools')]
     from botw_shader_remap import remap
     remap(work/'shader', previous_map, current_map)
     logs = work/'logs'
