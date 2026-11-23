@@ -2,6 +2,17 @@
 from pathlib import Path
 import hashlib,json,os,shutil,sys,tarfile
 
+def repair_capabilities(dest,state):
+ if state['key']!='botw':return
+ patched=dest/('patched_'+state['version']);fixups=patched/'main.fixups.tsv';text=fixups.read_text(encoding='utf-8')
+ if '# SCREEN_ASPECT\t' in text:return
+ # These authenticated captures predate the declaration, not the installed hooks.
+ # Gate the metadata migration on the verified build and its recorded screen patches.
+ assert state['main_build']=='cd57b23fa4bbad65803d9788c01821ee'
+ assert '# BUILD_ID\t'+state['main_build'] in text
+ assert 'screen copy into a 16:9 picture' in (patched/'main.cuts.tsv').read_text(encoding='utf-8')
+ fixups.write_text(text.rstrip()+'\n# SCREEN_ASPECT\t1\n',encoding='utf-8')
+
 def main(repo,legacy,dest,archive):
  repo,legacy,dest,archive=map(lambda p:Path(p).resolve(),(repo,legacy,dest,archive))
  with tarfile.open(legacy/'meta.tar.xz') as tar:tar.extractall(legacy/'meta',filter='data')
@@ -35,6 +46,7 @@ def main(repo,legacy,dest,archive):
  sys.path[:0]=[str(repo/'dm/gfx/tools'),str(repo/'dm/tools'),str(repo/'dm/games')]
  from remap import remap
  remap(dest/'shader',previous,current)
+ repair_capabilities(dest,state)
  assert state['main_build'] in (dest/('patched_'+state['version'])/'main.fixups.tsv').read_text()
  shutil.copyfile(legacy/'meta/game-assets.json',dest/'game-assets.json')
  shutil.copyfile(legacy/'meta/build-state.json',dest/'build-state.json')
