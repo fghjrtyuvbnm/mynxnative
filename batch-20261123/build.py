@@ -2,6 +2,12 @@
 from pathlib import Path
 import hashlib,importlib,json,os,plistlib,shutil,subprocess,sys,tarfile,zipfile
 
+def choose_scheme(project,display,title):
+ paths=list((project/'DmIOS.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
+ matches=[p.stem for p in paths if p.stem.endswith('('+title+')')]
+ assert len(matches)==1,('Expected one generated game scheme',matches)
+ return matches[0]
+
 def main(repo,archive,work,out):
  repo,archive,work,out=map(lambda p:Path(p).resolve(),(repo,archive,work,out))
  work.mkdir();out.mkdir()
@@ -58,7 +64,7 @@ def main(repo,archive,work,out):
   for name,value in expected.items():assert rows[name]['default']==value
   rows['DM_LANG']['options']=state['language_options']
  settings_path.write_text(json.dumps(settings,separators=(',',':')))
- run('xcodebuild','-project',project/'DmIOS.xcodeproj','-scheme',state['display']+' ('+title+')','-configuration','Release',
+ run('xcodebuild','-project',project/'DmIOS.xcodeproj','-scheme',choose_scheme(project,state['display'],title),'-configuration','Release',
   '-destination','generic/platform=iOS','-derivedDataPath',derived,'CODE_SIGNING_ALLOWED=NO','CODE_SIGNING_REQUIRED=NO','CODE_SIGN_IDENTITY=',
   'DM_COPY_GAME_RESOURCES=NO','DM_XCODE_OUTPUT_ROOT='+str(derived),'SYMROOT='+str(derived/'Build/Products'),
   'OBJROOT='+str(derived/'Build/Intermediates.noindex'),'build')
