@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        game: [taiko, refrain, sentinels, uncharted]
+        game: [refrain]
     runs-on: xcode-27
     timeout-minutes: 35
     env:
@@ -64,6 +64,11 @@ jobs:
           PY
       - name: Apply iOS GPU work directory cleanup
         run: git apply --check build-config/.github/gpuarchiver-cleanup.patch && git apply build-config/.github/gpuarchiver-cleanup.patch
+      - name: Apply and check compact 2D touch layout
+        run: |
+          git apply --check build-config/.github/refrain-compact-2d.patch
+          git apply build-config/.github/refrain-compact-2d.patch
+          python build-config/.github/verify-refrain-pad.py dm/ios/Sources/DmGamepad.m
       - name: Compile launcher with existing shader identity
         run: |
           python -u build-config/scripts/resonance_cache/convert_single_launcher.py "${{ matrix.game }}" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/input0.tar" "$RUNNER_TEMP/input1.tar" "$RUNNER_TEMP/game" "$RUNNER_TEMP/launcher.ipa"

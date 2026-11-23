@@ -1,0 +1,130 @@
+--- a/dm/ios/Sources/DmGamepad.m
++++ b/dm/ios/Sources/DmGamepad.m
+@@ -166,6 +166,8 @@
+ }
+ static BOOL fullOnly(int b) { return b == B_LS || b == B_RS || b >= B_LEFT; }   // keys shown only in the 3D layout
+ 
++- (BOOL)compact2D { return !_full && !_tap; }
++
+ - (instancetype)initWithFrame:(CGRect)f {
+     if ((self = [super initWithFrame:f])) {
+         self.multipleTouchEnabled = YES; self.opaque = NO; self.backgroundColor = UIColor.clearColor;
+@@ -186,10 +188,10 @@
+         _knob = shape(_controls);
+         CAShapeLayer *in = [CAShapeLayer layer]; in.fillColor = nil; in.strokeColor = k_line.CGColor; in.lineWidth = 1.5;   // inner ring of the knob
+         [_knob addSublayer:in];
+-        static NSString *const names[B_N] = {@"A", @"B", @"X", @"Y", @"L3", @"R3", @"L", @"R", @"ZL", @"ZR", @"+", @"−"};
++        static NSString *const names[B_N] = {@"A", @"B", @"X", @"Y", @"L3", @"R3", @"L", @"R", @"ZL", @"ZR", @"+", @"−", @"←", @"↑", @"→", @"↓"};
+         for (int b = 0; b < B_N; b++) {
+             _key[b] = shape(_controls);
+-            if (names[b]) _label[b] = label(_key[b], names[b]);   // the D-pad arms carry no label
++            _label[b] = label(_key[b], names[b]);
+         }
+         _swap = shape(_controls); _swapLabel = label(_swap, @"");
+         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:k_layout_key];
+@@ -209,8 +211,10 @@
+ }
+ - (void)applyLayout {   // show / hide the controls for the current layout
+     [CATransaction begin]; [CATransaction setDisableActions:YES];
+-    for (int b = 0; b < B_N; b++) _key[b].hidden = _tap || (fullOnly(b) && !_full);
+-    _ring.hidden = _knob.hidden = _tap;
++    for (int b = 0; b < B_N; b++)
++        _key[b].hidden = _tap || (fullOnly(b) && !_full && b < B_LEFT);
++    for (int b = B_LEFT; b <= B_DOWN; b++) _label[b].hidden = ![self compact2D];
++    _ring.hidden = _knob.hidden = _tap || [self compact2D];
+     _swapLabel.string = _tap ? @"Tap" : _full ? @"3D" : @"2D";
+     [CATransaction commit];
+ }
+@@ -250,10 +254,38 @@
+ - (CGPoint)swapCenter { CGRect s = self.safe; return CGPointMake(CGRectGetMidX(s), CGRectGetMinY(s) + K_PILL_Y * self.u); }
+ 
+ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); }
++
++- (CGPoint)directionCenter:(int)b {
++    CGPoint center = self.stickHome;
++    switch (b) {
++        case B_LEFT: center.x -= self.faceGap; break;
++        case B_RIGHT: center.x += self.faceGap; break;
++        case B_UP: center.y -= self.faceGap; break;
++        case B_DOWN: center.y += self.faceGap; break;
++    }
++    return center;
++}
++
++- (CGPoint)compactButtonCenter:(int)b {
++    BOOL menu = b == B_PLUS || b == B_MINUS;
++    BOOL right = b == B_R || b == B_ZR || b == B_PLUS;
++    BOOL outer = b == B_ZL || b == B_ZR;
++    CGFloat x = menu ? K_FACE_X + 104 : K_FACE_X + (outer ? -37 : 37);
++    CGFloat y = self.faceCenter.y - 124 * self.u;
++    if (menu) y = [self facePos:B_B].y;
++    return side(self.corner, right, x * self.u, y);
++}
++
++- (CGFloat)compactButtonRadius { return 23 * self.u; }
++
+ - (int)btnAt:(CGPoint)p {   // locked keys (tested on touch-down only, then locked)
+     CGFloat u = self.u;
+     for (int i = 0; i < (int)(sizeof k_btns / sizeof *k_btns); i++) { int b = k_btns[i];
+         if (fullOnly(b) && !_full) continue;
++        if ([self compact2D]) {
++            if (dist(p, [self compactButtonCenter:b]) <= self.compactButtonRadius * 1.2) return b;
++            continue;
++        }
+         BOOL hit = isDrop(b) ? dist(p, [self dropCenter:b]) <= [self dropR:b] * 1.35
+                  : isClick(b) ? dist(p, [self clickCenter:b]) <= K_CLICK_R * u * 1.35
+                  : CGRectContainsPoint(CGRectInset([self pillRect:b], -8 * u, -8 * u), p);
+@@ -267,6 +299,12 @@
+     return m;
+ }
+ - (uint64_t)dpadAt:(CGPoint)p {   // 8 directions: 45° each, diagonals press two keys; a small centre circle counts as none
++    if ([self compact2D]) {
++        uint64_t bits = 0;
++        for (int b = B_LEFT; b <= B_DOWN; b++)
++            if (dist(p, [self directionCenter:b]) <= self.faceR * 1.25) bits |= 1ull << b;
++        return bits;
++    }
+     CGPoint c = self.dpadCenter; CGFloat dx = p.x - c.x, dy = p.y - c.y;
+     if (hypot(dx, dy) < self.dpadR * 0.25) return 0;
+     double a = atan2(-dy, dx) * 180 / M_PI; uint64_t m = 0;
+@@ -344,7 +382,8 @@
+         CGFloat best = 1; int kind = C_NONE, idx = 0;
+         CGFloat f = dist(p, self.faceCenter) / (self.faceGap + self.faceR * 1.6); if (f <= best) { best = f; kind = C_FACE; }
+         if (_full) { CGFloat d = dist(p, self.dpadCenter) / (self.dpadR * K_DPAD_GRAB); if (d < best) { best = d; kind = C_DPAD; } }
+-        if (!_stick[0]) { CGFloat s = dist(p, self.stickHome) / ([self stickR:0] * K_STICK_GRAB); if (s < best) { best = s; kind = C_STICK; } }
++        if ([self compact2D] && [self dpadAt:p]) kind = C_DPAD;
++        if (![self compact2D] && !_stick[0]) { CGFloat s = dist(p, self.stickHome) / ([self stickR:0] * K_STICK_GRAB); if (s < best) { best = s; kind = C_STICK; } }
+         if (kind == C_NONE && _full && !_stick[1] && [self inRightArea:p]) { kind = C_STICK; idx = 1; _rCentre = p; }   // the right stick: centred where the touch lands
+         if (kind == C_FACE) { [_owner setObject:@(C_FACE) forKey:t]; [_faceOf setObject:@([self faceAt:p]) forKey:t]; }
+         else if (kind == C_DPAD) [_owner setObject:@(C_DPAD) forKey:t];
+@@ -421,7 +460,11 @@
+     _controls.frame = self.layer.bounds;
+     for (int b = B_A; b <= B_Y; b++) { CGPoint c = [self facePos:b]; setPath(_key[b], circlePath(c, self.faceR)); placeLabel(_label[b], c, 20 * u); }
+     for (int i = 0; i < (int)(sizeof k_btns / sizeof *k_btns); i++) { int b = k_btns[i];
+-        if (isDrop(b)) {
++        if ([self compact2D] && !fullOnly(b)) {
++            CGPoint c = [self compactButtonCenter:b];
++            setPath(_key[b], circlePath(c, self.compactButtonRadius));
++            placeLabel(_label[b], c, 16 * u);
++        } else if (isDrop(b)) {
+             BOOL right = b == B_ZR || b == B_R; CGPoint c = [self dropCenter:b];
+             setPath(_key[b], dropPath(c, [self dropR:b], right ? -M_PI_4 : -3 * M_PI_4, 4 * u)); placeLabel(_label[b], c, 16 * u);   // tip toward the near top corner
+         } else if (isClick(b)) {
+@@ -432,7 +475,16 @@
+         }
+     }
+     static const struct { int b; CGFloat angle; } arms[] = {{B_UP, 0}, {B_RIGHT, M_PI_2}, {B_DOWN, M_PI}, {B_LEFT, -M_PI_2}};   // the same arm in 90° steps
+-    for (int i = 0; i < 4; i++) setPath(_key[arms[i].b], armPath(self.dpadCenter, self.dpadR, K_ARM_W * u, K_ARM_IN * u, arms[i].angle, 6 * u));
++    for (int i = 0; i < 4; i++) {
++        int b = arms[i].b;
++        if ([self compact2D]) {
++            CGPoint c = [self directionCenter:b];
++            setPath(_key[b], circlePath(c, self.faceR));
++            placeLabel(_label[b], c, 20 * u);
++        } else {
++            setPath(_key[b], armPath(self.dpadCenter, self.dpadR, K_ARM_W * u, K_ARM_IN * u, arms[i].angle, 6 * u));
++        }
++    }
+     CGPoint sc = self.swapCenter; setPath(_swap, circlePath(sc, K_SWAP_R * u)); placeLabel(_swapLabel, sc, 12 * u);
+     setPath(_ring, circlePath(self.stickHome, [self stickR:0]));
+     CGFloat k = K_KNOB_R * u; _knob.bounds = CGRectMake(0, 0, 2 * k, 2 * k);
