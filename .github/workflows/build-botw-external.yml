@@ -1,115 +1,120 @@
-name: Build Pokemon Legends Arceus external IPA
+name: Update Pentiment and Arceus
 on:
   workflow_dispatch:
     inputs:
-      input_digest:
-        description: SHA-256 of the selected encrypted build input
-        type: string
+      game:
+        type: choice
         required: true
+        options: [pentiment, arceus]
 permissions:
   contents: read
 concurrency:
-  group: arceus-111-external
+  group: upgrade-20261127-${{ inputs.game }}
   cancel-in-progress: false
 jobs:
-  launcher:
+  build:
     if: github.event.repository.private == false
     runs-on: xcode-27
     timeout-minutes: 300
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       HOMEBREW_NO_AUTO_UPDATE: '1'
+      BUILD_GAME: ${{ inputs.game }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: seedds/nxnative
-          ref: f3e53afe42c36ccc53883dfec94d22f27cf2348c
+          ref: 80f27491457d507be5bbe5a1be8da3a9fb2ddd19
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           path: build-config
           persist-credentials: false
+          sparse-checkout: |
+            two-game-update/
+            update-inputs/${{ inputs.game }}/
+            scripts/ipa_crypto.py
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.14'
-      - name: Apply external-data support
-        run: cp -R build-config/arceus-overlay/. .
-      - name: Install build tools
+      - name: Apply retained layouts and external-data integration
+        run: cp -R build-config/two-game-update/overlay/. .
+      - name: Verify layout and data-management behavior
+        run: |
+          set -euo pipefail
+          dir=dm/ios/Sources
+          xcrun swiftc "$dir/GameDataCore.swift" "$dir/ShaderCache.swift" build-config/two-game-update/ShaderCacheTests.swift -o "$RUNNER_TEMP/data-tests"
+          "$RUNNER_TEMP/data-tests"
+      - name: Install native build tools
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
           brew install xcodegen zstd glslang
           if ! xcrun -sdk iphoneos metal --version; then xcodebuild -downloadComponent MetalToolchain; fi
           python -m pip install lz4 "capstone>=5,<6" fonttools cryptography requests nsz zbic
-      - name: Restore authenticated linking inputs
+      - name: Restore authenticated game inputs
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
-          INPUT_DIGEST: ${{ inputs.input_digest }}
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, os, shutil, sys
           from pathlib import Path
+          import os,sys,json,hashlib,shutil
           sys.path.insert(0,'build-config/scripts')
           from ipa_crypto import transform
           temp=Path(os.environ['RUNNER_TEMP'])
-          key=bytes.fromhex(os.environ['BUILD_CIPHER_KEY'])
-          inputs=Path('build-config/arceus-input')
-          archive=temp/'current.enc'
-          with archive.open('wb') as out:
-              for part in sorted(inputs.glob('part-*')):
-                  with part.open('rb') as source: shutil.copyfileobj(source,out)
-          with archive.open('rb') as stream:
-              assert hashlib.file_digest(stream,'sha256').hexdigest()==os.environ['INPUT_DIGEST']
-          transform(archive,temp/'current.tar.xz',key,True)
+          game=os.environ['BUILD_GAME']
+          parts=sorted((Path('build-config/update-inputs')/game).rglob('part-*'))
+          assert parts
+          with (temp/'input.enc').open('wb') as out:
+              for part in parts:
+                  with part.open('rb') as src: shutil.copyfileobj(src,out)
+          transform(temp/'input.enc',temp/'original.tar.xz',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
+          metadata=Path('build-config/two-game-update')/(game+'.enc')
+          transform(metadata,temp/'metadata.json',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']),True)
           PY
-      - name: Compile external launcher
-        run: |
-          set -euo pipefail
-          python -u build-config/scripts/resonance_cache/build-arceus.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/current.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output"
-      - name: Report build diagnostics
+          config="build-config/two-game-update"
+          if [ "$BUILD_GAME" = arceus ]; then
+              curl -fsSL --retry 3 https://raw.githubusercontent.com/seedds/nxnative/f3e53afe42c36ccc53883dfec94d22f27cf2348c/dm/games/01001F5010DFA000/shader_map.tsv -o "$RUNNER_TEMP/arceus-old-map.tsv"
+          fi
+          python "$config/normalize.py" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/original.tar.xz" "$RUNNER_TEMP/metadata.json" "$RUNNER_TEMP/arceus-old-map.tsv" "$RUNNER_TEMP/normalized" "$RUNNER_TEMP/input.tar.xz"
+      - name: Compile complete shaders and native runtime
+        run: python -u build-config/two-game-update/build.py "$GITHUB_WORKSPACE" "$RUNNER_TEMP/input.tar.xz" "$RUNNER_TEMP/game" "$RUNNER_TEMP/output"
+      - name: Report build failures
         if: failure()
         run: |
-          for name in mac_host_make mac_host_build heap_check dmsh_build; do
-            path="$RUNNER_TEMP/game/logs/$name.log"
-            if [ -f "$path" ]; then tail -40 "$path"; fi
+          for file in "$RUNNER_TEMP/game/logs/"*.log; do
+            if [ -f "$file" ]; then tail -35 "$file"; fi
           done
-      - name: Encrypt build diagnostics
+      - name: Encrypt outputs and recoverable checkpoints
         if: always()
         env:
           BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
         run: |
           python - <<'PY'
-          import os, tarfile, sys
+          import os,sys,tarfile
           from pathlib import Path
           sys.path.insert(0,'build-config/scripts')
           from ipa_crypto import transform
-          temp=Path(os.environ['RUNNER_TEMP']); work=temp/'game'
-          with tarfile.open(temp/'arceus-diagnostics.tar','w') as tar:
+          temp=Path(os.environ['RUNNER_TEMP']);out=temp/'output';sealed=temp/'sealed';sealed.mkdir(exist_ok=True)
+          key=bytes.fromhex(os.environ['BUILD_CIPHER_KEY'])
+          for name in ('game.ipa','game-data.json','shaders.pack'):
+              source=out/name
+              if source.is_file():
+                  dest=sealed/(name+'.enc');transform(source,dest,key)
+                  assert dest.stat().st_size==source.stat().st_size+36;source.unlink()
+          with tarfile.open(temp/'diagnostics.tar','w') as tar:
               for name in ('logs','profile'):
-                  path=work/name
-                  if path.exists(): tar.add(path,name)
-          transform(temp/'arceus-diagnostics.tar',temp/'arceus-diagnostics.enc',bytes.fromhex(os.environ['BUILD_CIPHER_KEY']))
+                  source=temp/'game'/name
+                  if source.exists():tar.add(source,name)
+          transform(temp/'diagnostics.tar',sealed/'diagnostics.enc',key)
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: arceus-encrypted-diagnostics
-          path: ${{ runner.temp }}/arceus-diagnostics.enc
-          retention-days: 1
-          compression-level: 0
-      - name: Encrypt unsigned IPA and shader pack
-        env:
-          BUILD_CIPHER_KEY: ${{ secrets.BUILD_CIPHER_KEY }}
-        run: |
-          set -euo pipefail
-          tar -cf "$RUNNER_TEMP/arceus.tar" -C "$RUNNER_TEMP/output" PokemonLegendsArceus.ipa game-data.json shaders.pack
-          python build-config/scripts/ipa_crypto.py encrypt "$RUNNER_TEMP/arceus.tar" "$RUNNER_TEMP/arceus.enc"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: arceus-encrypted-external-build
-          path: ${{ runner.temp }}/arceus.enc
+          name: upgrade-${{ inputs.game }}-encrypted
+          path: ${{ runner.temp }}/sealed/*.enc
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
-
